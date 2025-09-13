@@ -93,12 +93,14 @@ class PDFProcessor:
         return rect.width, rect.height
 
     @staticmethod
-    def images_to_pdf(images: List[Image.Image], output_path: Optional[Path] = None) -> bytes:
+    def images_to_pdf(images: List[Image.Image], output_path: Optional[Path] = None,
+                     target_page_size: Optional[Tuple[float, float]] = None) -> bytes:
         """Convert a list of PIL Images to a PDF.
 
         Args:
             images: List of PIL Images
             output_path: Optional path to save the PDF
+            target_page_size: Optional tuple of (width, height) in points for exact page size
 
         Returns:
             PDF as bytes
@@ -123,25 +125,49 @@ class PDFProcessor:
             img.save(img_bytes, format='PNG')
             img_bytes.seek(0)
 
-            # Calculate page size to match image aspect ratio
-            # Using standard US Letter as base (612x792 points)
-            img_width, img_height = img.size
-            aspect = img_width / img_height
-
-            if aspect > 612/792:
-                # Image is wider than page
-                page_width = 612
-                page_height = 612 / aspect
+            # Use target page size if provided, otherwise calculate from image
+            if target_page_size:
+                page_width, page_height = target_page_size
             else:
-                # Image is taller than page
-                page_height = 792
-                page_width = 792 * aspect
+                # Calculate page size to match image aspect ratio
+                # Using standard US Letter as base (612x792 points)
+                img_width, img_height = img.size
+                aspect = img_width / img_height
 
-            # Create page with calculated size
+                if aspect > 612/792:
+                    # Image is wider than page
+                    page_width = 612
+                    page_height = 612 / aspect
+                else:
+                    # Image is taller than page
+                    page_height = 792
+                    page_width = 792 * aspect
+
+            # Create page with calculated or target size
             page = doc.new_page(width=page_width, height=page_height)
 
-            # Insert image
-            rect = page.rect
+            # Insert image at top-left if using target size, otherwise fill page
+            if target_page_size:
+                # Calculate image rect to maintain aspect ratio and position at top
+                img_width, img_height = img.size
+                img_aspect = img_width / img_height
+                page_aspect = page_width / page_height
+
+                if img_aspect > page_aspect:
+                    # Image is wider relative to page
+                    rect_width = page_width
+                    rect_height = page_width / img_aspect
+                else:
+                    # Image is taller relative to page
+                    rect_height = page_height
+                    rect_width = page_height * img_aspect
+
+                # Position at top-left
+                rect = fitz.Rect(0, 0, rect_width, rect_height)
+            else:
+                # Fill entire page
+                rect = page.rect
+
             page.insert_image(rect, stream=img_bytes.read())
 
         # Save to bytes

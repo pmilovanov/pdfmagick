@@ -66,6 +66,28 @@ def calculate_scale_factor(actual_width: float, actual_height: float,
     return min(scale_x, scale_y)
 
 
+def add_bottom_padding(image: Image.Image, target_height: int) -> Image.Image:
+    """Add white padding to the bottom of an image to reach target height.
+
+    Args:
+        image: Input PIL Image
+        target_height: Target height in pixels
+
+    Returns:
+        Padded image if needed, original image if already tall enough
+    """
+    if image.height >= target_height:
+        return image
+
+    # Create new image with target height and white background
+    padded = Image.new('RGB', (image.width, target_height), (255, 255, 255))
+
+    # Paste original image at top
+    padded.paste(image, (0, 0))
+
+    return padded
+
+
 def apply_filters_to_image(image, settings):
     """Apply filter settings to an image."""
     return ImageFilters.apply_all_adjustments(
@@ -478,6 +500,18 @@ def main():
 
         # Export section
         st.header("💾 Export Processed PDF")
+
+        # Show padding option if page size override is active
+        if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
+            pad_to_exact_size = st.checkbox(
+                "📏 Pad to exact page size (bottom padding)",
+                value=False,
+                help="Add white padding at the bottom to match exact target page size. "
+                     "This ensures pages only need trimming on one side when printed."
+            )
+        else:
+            pad_to_exact_size = False
+
         col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 3])
 
         with col_exp1:
@@ -511,10 +545,22 @@ def main():
                             settings = st.session_state.page_filters[page_num]
                             img = apply_filters_to_image(img, settings)
 
+                        # Apply padding if enabled and page size override is active
+                        if pad_to_exact_size and st.session_state.page_size_override:
+                            target_w, target_h = st.session_state.page_size_override
+                            target_height_pixels = int(target_h * export_dpi)
+                            img = add_bottom_padding(img, target_height_pixels)
+
                         processed_images.append(img)
 
-                    # Generate PDF
-                    pdf_bytes = PDFProcessor.images_to_pdf(processed_images)
+                    # Generate PDF with exact page size if padding is enabled
+                    if pad_to_exact_size and st.session_state.page_size_override:
+                        target_w, target_h = st.session_state.page_size_override
+                        # Convert inches to points (72 points per inch)
+                        target_page_size = (target_w * 72, target_h * 72)
+                        pdf_bytes = PDFProcessor.images_to_pdf(processed_images, target_page_size=target_page_size)
+                    else:
+                        pdf_bytes = PDFProcessor.images_to_pdf(processed_images)
 
                     # Offer download
                     st.download_button(
