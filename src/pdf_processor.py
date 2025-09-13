@@ -41,6 +41,21 @@ class PDFProcessor:
             raise ValueError(f"Page number {page_num} out of range (0-{self.page_count-1})")
 
         page = self.doc[page_num]
+
+        # Get page dimensions and calculate expected pixel size
+        rect = page.rect
+        width_inches = rect.width / 72.0
+        height_inches = rect.height / 72.0
+        expected_width = int(width_inches * dpi)
+        expected_height = int(height_inches * dpi)
+        expected_pixels = expected_width * expected_height
+
+        # Warn if the image will be very large
+        if expected_pixels > 50_000_000:  # 50 megapixels
+            print(f"Warning: Page {page_num} at {dpi} DPI will be {expected_width}x{expected_height} "
+                  f"({expected_pixels/1_000_000:.1f} megapixels). "
+                  f"Original page size: {width_inches:.1f}x{height_inches:.1f} inches")
+
         mat = fitz.Matrix(dpi/72.0, dpi/72.0)
         pix = page.get_pixmap(matrix=mat)
 

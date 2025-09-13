@@ -3,7 +3,7 @@
 import streamlit as st
 from pathlib import Path
 import tempfile
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import io
 import numpy as np
 import cv2
@@ -42,6 +42,28 @@ def get_default_filter_settings() -> Dict[str, Any]:
         'white_point': 255,
         'gamma': 1.0
     }
+
+
+def get_page_sizes() -> Dict[str, Tuple[float, float]]:
+    """Get standard page sizes in inches (width, height)."""
+    return {
+        "Auto (use PDF dimensions)": None,
+        "Letter (8.5 × 11 in)": (8.5, 11.0),
+        "Letter Landscape (11 × 8.5 in)": (11.0, 8.5),
+        "A4 (8.27 × 11.69 in)": (8.27, 11.69),
+        "A4 Landscape (11.69 × 8.27 in)": (11.69, 8.27),
+        "Legal (8.5 × 14 in)": (8.5, 14.0),
+        "Tabloid (11 × 17 in)": (11.0, 17.0),
+        "A3 (11.69 × 16.54 in)": (11.69, 16.54),
+    }
+
+
+def calculate_scale_factor(actual_width: float, actual_height: float,
+                          target_width: float, target_height: float) -> float:
+    """Calculate scale factor to fit image within target dimensions while maintaining aspect ratio."""
+    scale_x = target_width / actual_width
+    scale_y = target_height / actual_height
+    return min(scale_x, scale_y)
 
 
 def apply_filters_to_image(image, settings):
@@ -126,6 +148,73 @@ def main():
 
             st.success(f"PDF loaded: {pdf_proc.page_count} pages")
 
+            # Page Size Override
+            st.header("📐 Page Size Override")
+
+            # Get first page dimensions to show as example
+            first_page_width, first_page_height = pdf_proc.get_page_dimensions(0)
+            detected_width_in = first_page_width / 72
+            detected_height_in = first_page_height / 72
+
+            # Check if dimensions seem suspicious (> 15 inches)
+            if detected_width_in > 15 or detected_height_in > 15:
+                st.warning(f"⚠️ Detected unusual page size: {detected_width_in:.1f} × {detected_height_in:.1f} inches")
+
+            page_sizes = get_page_sizes()
+            selected_size = st.selectbox(
+                "Page Size",
+                options=list(page_sizes.keys()),
+                index=0,
+                help="Override detected page dimensions if they seem incorrect"
+            )
+
+            # Store the selected page size in session state
+            st.session_state.page_size_override = page_sizes[selected_size]
+
+            # Show scaling information if override is selected
+            if st.session_state.page_size_override:
+                target_w, target_h = st.session_state.page_size_override
+                scale_factor = calculate_scale_factor(
+                    detected_width_in, detected_height_in,
+                    target_w, target_h
+                )
+                scaled_width = detected_width_in * scale_factor
+                scaled_height = detected_height_in * scale_factor
+
+                st.info(f"📊 Scaling: {detected_width_in:.1f}×{detected_height_in:.1f}\" → "
+                       f"{scaled_width:.1f}×{scaled_height:.1f}\" (factor: {scale_factor:.2f})")
+
+                # Show effective resolution
+                for dpi_setting in [150, 300]:
+                    effective_dpi = int(dpi_setting * scale_factor)
+                    st.text(f"• {dpi_setting} DPI setting → {effective_dpi} DPI effective")
+
+            # Debug: Show page dimensions
+            if st.checkbox("Show PDF Details", value=False):
+                for i in range(min(3, pdf_proc.page_count)):  # Show first 3 pages
+                    width, height = pdf_proc.get_page_dimensions(i)
+                    width_in = width / 72
+                    height_in = height / 72
+                    st.text(f"Page {i+1}: {width:.0f}x{height:.0f} pts ({width_in:.1f}x{height_in:.1f} inches)")
+
+                    # Apply scale factor if override is selected
+                    if st.session_state.page_size_override:
+                        target_w, target_h = st.session_state.page_size_override
+                        scale = calculate_scale_factor(width_in, height_in, target_w, target_h)
+                        st.text(f"  Scale factor: {scale:.3f}")
+                        for dpi in [150, 200, 300, 400]:
+                            effective_dpi = int(dpi * scale)
+                            px_w = int(width_in * effective_dpi)
+                            px_h = int(height_in * effective_dpi)
+                            megapixels = (px_w * px_h) / 1_000_000
+                            st.text(f"  At {dpi} DPI: {px_w}x{px_h} px ({megapixels:.1f} MP) [eff: {effective_dpi} DPI]")
+                    else:
+                        for dpi in [150, 200, 300, 400]:
+                            px_w = int(width_in * dpi)
+                            px_h = int(height_in * dpi)
+                            megapixels = (px_w * px_h) / 1_000_000
+                            st.text(f"  At {dpi} DPI: {px_w}x{px_h} px ({megapixels:.1f} MP)")
+
             # Page navigation
             st.header("📖 Page Navigation")
             col1, col2 = st.columns(2)
@@ -157,8 +246,18 @@ def main():
             if st.button("✨ Auto Enhance All Pages"):
                 with st.spinner("Auto-enhancing all pages..."):
                     for page_num in range(pdf_proc.page_count):
+                        # Calculate effective DPI with page size override
+                        display_dpi = 150
+                        if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
+                            page_width, page_height = pdf_proc.get_page_dimensions(page_num)
+                            width_in = page_width / 72
+                            height_in = page_height / 72
+                            target_w, target_h = st.session_state.page_size_override
+                            scale_factor = calculate_scale_factor(width_in, height_in, target_w, target_h)
+                            display_dpi = int(display_dpi * scale_factor)
+
                         # Get the image for this page
-                        img = pdf_proc.get_page_as_image(page_num, dpi=150)
+                        img = pdf_proc.get_page_as_image(page_num, dpi=display_dpi)
                         img_array = np.array(img)
 
                         # Calculate grayscale for analysis
@@ -167,22 +266,30 @@ def main():
                         else:
                             gray = img_array
 
-                        # Find optimal settings for this specific page
-                        black_point = int(np.percentile(gray, 2))
-                        white_point = int(np.percentile(gray, 98))
+                        # Find optimal settings for this specific page (less aggressive)
+                        black_point = int(np.percentile(gray, 5))
+                        white_point = int(np.percentile(gray, 95))
 
                         # Create settings for this page
                         page_settings = get_default_filter_settings()
-                        page_settings['black_point'] = black_point
-                        page_settings['white_point'] = white_point
-                        page_settings['contrast'] = 10.0
+
+                        # Only apply if there's meaningful room for improvement
+                        if black_point > 20 or white_point < 235:
+                            # Moderate the adjustment
+                            page_settings['black_point'] = min(black_point, 50)
+                            page_settings['white_point'] = max(white_point, 205)
+                            page_settings['contrast'] = 5.0
+                        else:
+                            # Already well-distributed, subtle enhancement only
+                            page_settings['contrast'] = 3.0
+                            page_settings['brightness'] = 2.0
 
                         # Save settings for this page
                         st.session_state.page_filters[page_num] = page_settings
 
-                    # Update current page settings if it's the current page
-                    if current_page in st.session_state.page_filters:
-                        st.session_state.filter_settings = st.session_state.page_filters[current_page].copy()
+                    # Update current page settings if it's the currently selected page
+                    if st.session_state.current_page in st.session_state.page_filters:
+                        st.session_state.filter_settings = st.session_state.page_filters[st.session_state.current_page].copy()
 
                 st.success(f"Auto enhancement applied to all {pdf_proc.page_count} pages!")
                 st.rerun()
@@ -219,7 +326,17 @@ def main():
 
             # Auto enhance button
             if st.button("✨ Auto Enhance"):
-                original_image = pdf_proc.get_page_as_image(current_page, dpi=150)
+                # Calculate effective DPI with page size override
+                display_dpi = 150
+                if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
+                    page_width, page_height = pdf_proc.get_page_dimensions(current_page)
+                    width_in = page_width / 72
+                    height_in = page_height / 72
+                    target_w, target_h = st.session_state.page_size_override
+                    scale_factor = calculate_scale_factor(width_in, height_in, target_w, target_h)
+                    display_dpi = int(display_dpi * scale_factor)
+
+                original_image = pdf_proc.get_page_as_image(current_page, dpi=display_dpi)
 
                 # Calculate auto-enhance parameters
                 img_array = np.array(original_image)
@@ -228,14 +345,24 @@ def main():
                 else:
                     gray = img_array
 
-                # Find optimal black and white points
-                black_point = int(np.percentile(gray, 2))
-                white_point = int(np.percentile(gray, 98))
+                # Find optimal black and white points (less aggressive)
+                black_point = int(np.percentile(gray, 5))
+                white_point = int(np.percentile(gray, 95))
 
-                # Update the filter settings
-                st.session_state.filter_settings['black_point'] = black_point
-                st.session_state.filter_settings['white_point'] = white_point
-                st.session_state.filter_settings['contrast'] = 10.0  # Slight contrast boost
+                # Only apply if there's meaningful room for improvement
+                if black_point > 20 or white_point < 235:
+                    # Moderate the adjustment to avoid overcorrection
+                    black_point = min(black_point, 50)  # Don't push blacks too hard
+                    white_point = max(white_point, 205)  # Keep some headroom in whites
+
+                    # Update the filter settings
+                    st.session_state.filter_settings['black_point'] = black_point
+                    st.session_state.filter_settings['white_point'] = white_point
+                    st.session_state.filter_settings['contrast'] = 5.0  # Gentler contrast boost
+                else:
+                    # Image is already well-distributed, just add subtle enhancement
+                    st.session_state.filter_settings['contrast'] = 3.0
+                    st.session_state.filter_settings['brightness'] = 2.0
 
                 # Save to page filters
                 st.session_state.page_filters[current_page] = st.session_state.filter_settings.copy()
@@ -315,7 +442,18 @@ def main():
         # Display original image
         with col_original:
             st.header(f"📄 Original - Page {current_page + 1}")
-            original_image = pdf_proc.get_page_as_image(current_page, dpi=150)
+
+            # Calculate effective DPI with page size override
+            display_dpi = 150
+            if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
+                page_width, page_height = pdf_proc.get_page_dimensions(current_page)
+                width_in = page_width / 72
+                height_in = page_height / 72
+                target_w, target_h = st.session_state.page_size_override
+                scale_factor = calculate_scale_factor(width_in, height_in, target_w, target_h)
+                display_dpi = int(display_dpi * scale_factor)
+
+            original_image = pdf_proc.get_page_as_image(current_page, dpi=display_dpi)
             st.image(original_image, use_container_width=True)
 
         # Display processed image
@@ -355,8 +493,18 @@ def main():
                     # Process all pages
                     processed_images = []
                     for page_num in range(pdf_proc.page_count):
-                        # Get original image at export DPI
-                        img = pdf_proc.get_page_as_image(page_num, dpi=export_dpi)
+                        # Calculate effective DPI with page size override
+                        effective_export_dpi = export_dpi
+                        if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
+                            page_width, page_height = pdf_proc.get_page_dimensions(page_num)
+                            width_in = page_width / 72
+                            height_in = page_height / 72
+                            target_w, target_h = st.session_state.page_size_override
+                            scale_factor = calculate_scale_factor(width_in, height_in, target_w, target_h)
+                            effective_export_dpi = int(export_dpi * scale_factor)
+
+                        # Get original image at effective DPI
+                        img = pdf_proc.get_page_as_image(page_num, dpi=effective_export_dpi)
 
                         # Apply filters if they exist for this page
                         if page_num in st.session_state.page_filters:
