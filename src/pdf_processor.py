@@ -94,13 +94,16 @@ class PDFProcessor:
 
     @staticmethod
     def images_to_pdf(images: List[Image.Image], output_path: Optional[Path] = None,
-                     target_page_size: Optional[Tuple[float, float]] = None) -> bytes:
+                     target_page_size: Optional[Tuple[float, float]] = None,
+                     image_format: str = "JPEG", jpeg_quality: int = 95) -> bytes:
         """Convert a list of PIL Images to a PDF.
 
         Args:
             images: List of PIL Images
             output_path: Optional path to save the PDF
             target_page_size: Optional tuple of (width, height) in points for exact page size
+            image_format: Image format for embedding ("JPEG" or "PNG")
+            jpeg_quality: JPEG quality (1-100) if using JPEG format
 
         Returns:
             PDF as bytes
@@ -114,7 +117,8 @@ class PDFProcessor:
         for img in images:
             # Convert PIL Image to bytes
             img_bytes = io.BytesIO()
-            # Convert RGBA to RGB if necessary
+
+            # Ensure image is in RGB mode (required for JPEG)
             if img.mode == 'RGBA':
                 rgb_img = Image.new('RGB', img.size, (255, 255, 255))
                 rgb_img.paste(img, mask=img.split()[3])
@@ -122,7 +126,12 @@ class PDFProcessor:
             elif img.mode != 'RGB':
                 img = img.convert('RGB')
 
-            img.save(img_bytes, format='PNG')
+            # Save with specified format and compression
+            if image_format == "JPEG":
+                img.save(img_bytes, format='JPEG', quality=jpeg_quality, optimize=True)
+            else:
+                img.save(img_bytes, format='PNG')
+
             img_bytes.seek(0)
 
             # Use target page size if provided, otherwise calculate from image

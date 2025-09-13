@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, Tuple
 import io
 import numpy as np
 import cv2
+from PIL import Image
 
 from pdf_processor import PDFProcessor
 from image_filters import ImageFilters
@@ -512,6 +513,16 @@ def main():
         else:
             pad_to_exact_size = False
 
+        # Compression settings
+        col_comp1, col_comp2 = st.columns(2)
+        with col_comp1:
+            compression_format = st.selectbox(
+                "Image Format",
+                options=["JPEG (95% quality)", "JPEG (90% quality)", "JPEG (85% quality)", "PNG (lossless)"],
+                index=0,
+                help="JPEG provides much smaller file sizes with minimal quality loss. PNG preserves exact quality but creates larger files."
+            )
+
         col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 3])
 
         with col_exp1:
@@ -553,14 +564,39 @@ def main():
 
                         processed_images.append(img)
 
+                    # Parse compression settings
+                    if compression_format.startswith("JPEG"):
+                        image_format = "JPEG"
+                        # Extract quality from format string
+                        if "95%" in compression_format:
+                            quality = 95
+                        elif "90%" in compression_format:
+                            quality = 90
+                        elif "85%" in compression_format:
+                            quality = 85
+                        else:
+                            quality = 95  # Default
+                    else:
+                        image_format = "PNG"
+                        quality = None
+
                     # Generate PDF with exact page size if padding is enabled
                     if pad_to_exact_size and st.session_state.page_size_override:
                         target_w, target_h = st.session_state.page_size_override
                         # Convert inches to points (72 points per inch)
                         target_page_size = (target_w * 72, target_h * 72)
-                        pdf_bytes = PDFProcessor.images_to_pdf(processed_images, target_page_size=target_page_size)
+                        pdf_bytes = PDFProcessor.images_to_pdf(
+                            processed_images,
+                            target_page_size=target_page_size,
+                            image_format=image_format,
+                            jpeg_quality=quality
+                        )
                     else:
-                        pdf_bytes = PDFProcessor.images_to_pdf(processed_images)
+                        pdf_bytes = PDFProcessor.images_to_pdf(
+                            processed_images,
+                            image_format=image_format,
+                            jpeg_quality=quality
+                        )
 
                     # Offer download
                     st.download_button(
