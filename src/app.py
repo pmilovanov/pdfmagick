@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, Tuple
 import io
 import numpy as np
 import cv2
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from pdf_processor import PDFProcessor
 from image_filters import ImageFilters
@@ -87,6 +87,73 @@ def add_bottom_padding(image: Image.Image, target_height: int) -> Image.Image:
     padded.paste(image, (0, 0))
 
     return padded
+
+
+def add_page_number(image: Image.Image, page_num: int, total_pages: int,
+                   format_style: str = "Page {n}", font_size: int = 14,
+                   margin: int = 30) -> Image.Image:
+    """Add page number to bottom-right corner of image.
+
+    Args:
+        image: Input PIL Image
+        page_num: Current page number (0-indexed)
+        total_pages: Total number of pages
+        format_style: Format string for page number
+        font_size: Font size in points
+        margin: Margin from edges in pixels
+
+    Returns:
+        Image with page number added
+    """
+    # Create a copy to avoid modifying original
+    img_with_number = image.copy()
+    draw = ImageDraw.Draw(img_with_number)
+
+    # Format the page number text
+    if format_style == "Page {n}":
+        text = f"Page {page_num + 1}"
+    elif format_style == "{n}":
+        text = str(page_num + 1)
+    elif format_style == "{n} of {total}":
+        text = f"{page_num + 1} of {total_pages}"
+    else:
+        text = str(page_num + 1)
+
+    # Try to use a nice font, fall back to default if not available
+    try:
+        # Try common system fonts
+        font_options = [
+            "Helvetica.ttc", "Arial.ttf", "DejaVuSans.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        ]
+        font = None
+        for font_path in font_options:
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                break
+            except:
+                continue
+
+        if font is None:
+            # If no system fonts found, use default
+            font = ImageFont.load_default()
+    except:
+        font = ImageFont.load_default()
+
+    # Calculate text position (bottom-right with margin)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    x = image.width - text_width - margin
+    y = image.height - text_height - margin
+
+    # Draw text with slight shadow for readability
+    shadow_offset = 1
+    draw.text((x + shadow_offset, y + shadow_offset), text, fill=(200, 200, 200), font=font)  # Shadow
+    draw.text((x, y), text, fill=(50, 50, 50), font=font)  # Main text
+
+    return img_with_number
 
 
 def apply_filters_to_image(image, settings):
@@ -513,6 +580,42 @@ def main():
         else:
             pad_to_exact_size = False
 
+        # Page numbering options
+        add_page_numbers = st.checkbox(
+            "🔢 Add page numbers",
+            value=False,
+            help="Add page numbers to the bottom-right corner of each page"
+        )
+
+        if add_page_numbers:
+            col_pn1, col_pn2, col_pn3 = st.columns(3)
+            with col_pn1:
+                page_number_format = st.selectbox(
+                    "Format",
+                    options=["Page {n}", "{n}", "{n} of {total}"],
+                    index=0,
+                    help="Choose how page numbers are displayed"
+                )
+            with col_pn2:
+                page_number_size = st.selectbox(
+                    "Font Size",
+                    options=[12, 14, 16, 18, 20],
+                    index=1
+                )
+            with col_pn3:
+                page_number_margin = st.number_input(
+                    "Margin (px)",
+                    min_value=10,
+                    max_value=100,
+                    value=30,
+                    step=5,
+                    help="Distance from bottom-right corner"
+                )
+        else:
+            page_number_format = "Page {n}"
+            page_number_size = 14
+            page_number_margin = 30
+
         # Compression settings
         col_comp1, col_comp2 = st.columns(2)
         with col_comp1:
@@ -555,6 +658,17 @@ def main():
                         if page_num in st.session_state.page_filters:
                             settings = st.session_state.page_filters[page_num]
                             img = apply_filters_to_image(img, settings)
+
+                        # Add page number if enabled (before padding)
+                        if add_page_numbers:
+                            img = add_page_number(
+                                img,
+                                page_num,
+                                pdf_proc.page_count,
+                                format_style=page_number_format,
+                                font_size=page_number_size,
+                                margin=page_number_margin
+                            )
 
                         # Apply padding if enabled and page size override is active
                         if pad_to_exact_size and st.session_state.page_size_override:
