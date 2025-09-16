@@ -573,7 +573,7 @@ def main():
         if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
             pad_to_exact_size = st.checkbox(
                 "📏 Pad to exact page size (bottom padding)",
-                value=False,
+                value=True,  # Default to enabled when page size override is active
                 help="Add white padding at the bottom to match exact target page size. "
                      "This ensures pages only need trimming on one side when printed."
             )
@@ -599,8 +599,8 @@ def main():
             with col_pn2:
                 page_number_size = st.selectbox(
                     "Font Size",
-                    options=[12, 14, 16, 18, 20],
-                    index=1
+                    options=[10, 11, 12, 14, 16, 18],
+                    index=1  # Default to 11
                 )
             with col_pn3:
                 page_number_margin = st.number_input(
@@ -613,7 +613,7 @@ def main():
                 )
         else:
             page_number_format = "Page {n}"
-            page_number_size = 14
+            page_number_size = 11
             page_number_margin = 30
 
         # Compression settings
@@ -632,7 +632,7 @@ def main():
             export_dpi = st.selectbox(
                 "Export Quality (DPI)",
                 options=[150, 200, 300, 400],
-                index=1
+                index=2  # Default to 300 DPI
             )
 
         with col_exp2:
@@ -661,13 +661,18 @@ def main():
 
                         # Add page number if enabled (before padding)
                         if add_page_numbers:
+                            # Scale font size based on DPI (font points to pixels)
+                            # Standard conversion: pixels = points * DPI / 72
+                            scaled_font_size = int(page_number_size * effective_export_dpi / 72)
+                            scaled_margin = int(page_number_margin * effective_export_dpi / 150)  # Scale margin relative to base DPI
+
                             img = add_page_number(
                                 img,
                                 page_num,
                                 pdf_proc.page_count,
                                 format_style=page_number_format,
-                                font_size=page_number_size,
-                                margin=page_number_margin
+                                font_size=scaled_font_size,
+                                margin=scaled_margin
                             )
 
                         # Apply padding if enabled and page size override is active
