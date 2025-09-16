@@ -3,8 +3,9 @@
 import streamlit as st
 from pathlib import Path
 import tempfile
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import io
+import math
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
@@ -87,6 +88,88 @@ def add_bottom_padding(image: Image.Image, target_height: int) -> Image.Image:
     padded.paste(image, (0, 0))
 
     return padded
+
+
+def arrange_pages_cut_and_stack(n: int) -> List[Optional[int]]:
+    """Arrange pages for cut-and-stack double-sided printing.
+
+    Args:
+        n: Total number of pages
+
+    Returns:
+        Flat array where every 4 elements represent one sheet:
+        [front_left, front_right, back_left, back_right, ...]
+        Page numbers are 1-indexed, None represents blank pages
+    """
+    sheets_count = math.ceil(n / 4)
+    output = []
+
+    for i in range(sheets_count):
+        # Calculate page numbers for each position
+        front_left = 2 * i + 1
+        front_right = 2 * sheets_count + 2 * i + 1
+        back_left = 2 * sheets_count + 2 * i + 2
+        back_right = 2 * i + 2
+
+        # Append positions, using None for out-of-range pages
+        output.append(front_left if front_left <= n else None)
+        output.append(front_right if front_right <= n else None)
+        output.append(back_left if back_left <= n else None)
+        output.append(back_right if back_right <= n else None)
+
+    return output
+
+
+def create_2up_page(left_img: Optional[Image.Image],
+                   right_img: Optional[Image.Image],
+                   target_width: float,
+                   target_height: float,
+                   dpi: int) -> Image.Image:
+    """Create a landscape sheet with two pages side-by-side.
+
+    Args:
+        left_img: Image for left side (or None for blank)
+        right_img: Image for right side (or None for blank)
+        target_width: Target width in inches (for landscape, this is the longer dimension)
+        target_height: Target height in inches (for landscape, this is the shorter dimension)
+        dpi: DPI for output
+
+    Returns:
+        Composite image with both pages side-by-side, top-aligned
+    """
+    # Create blank landscape canvas
+    sheet_width_px = int(target_width * dpi)
+    sheet_height_px = int(target_height * dpi)
+    sheet = Image.new('RGB', (sheet_width_px, sheet_height_px), (255, 255, 255))
+
+    # Calculate half-page dimensions
+    half_width = sheet_width_px // 2
+
+    # Place left page if exists
+    if left_img:
+        # Scale to fit in left half, maintaining aspect ratio
+        scale = min(half_width / left_img.width, sheet_height_px / left_img.height)
+        new_width = int(left_img.width * scale)
+        new_height = int(left_img.height * scale)
+        resized = left_img.resize((new_width, new_height), Image.LANCZOS)
+
+        # Top-align in left half, center horizontally within the half
+        x_offset = (half_width - new_width) // 2
+        sheet.paste(resized, (x_offset, 0))
+
+    # Place right page if exists
+    if right_img:
+        # Scale to fit in right half
+        scale = min(half_width / right_img.width, sheet_height_px / right_img.height)
+        new_width = int(right_img.width * scale)
+        new_height = int(right_img.height * scale)
+        resized = right_img.resize((new_width, new_height), Image.LANCZOS)
+
+        # Top-align in right half, center horizontally within the half
+        x_offset = half_width + (half_width - new_width) // 2
+        sheet.paste(resized, (x_offset, 0))
+
+    return sheet
 
 
 def add_page_number(image: Image.Image, page_num: int, total_pages: int,
@@ -577,8 +660,55 @@ def main():
                 help="Add white padding at the bottom to match exact target page size. "
                      "This ensures pages only need trimming on one side when printed."
             )
+
+            # 2-up layout option (only available with page size override)
+            two_up_enabled = st.checkbox(
+                "📖 2-up layout (2 pages per sheet)",
+                value=False,
+                help="Arrange two pages side-by-side on landscape-oriented sheets"
+            )
+
+            if two_up_enabled:
+                layout_mode = st.radio(
+                    "Layout mode",
+                    options=["Sequential", "Cut & Stack"],
+                    index=0,
+                    help="Sequential: Pages in order (1,2 | 3,4...). Cut & Stack: Special imposition for booklet creation"
+                )
+
+                if layout_mode == "Cut & Stack":
+                    # Starting page selector
+                    start_page = st.number_input(
+                        "Start from page",
+                        min_value=1,
+                        max_value=pdf_proc.page_count,
+                        value=1,
+                        step=1,
+                        help="Pages before this will be excluded from the export"
+                    )
+
+                    # Show feedback about which pages will be exported
+                    pages_to_export = pdf_proc.page_count - start_page + 1
+                    if start_page > 1:
+                        st.info(f"📄 Will export pages {start_page} to {pdf_proc.page_count} ({pages_to_export} pages)")
+
+                    st.info(
+                        "🔪 **Cut & Stack Instructions:**\n"
+                        "1. Print double-sided\n"
+                        "2. Cut each sheet vertically down the middle\n"
+                        "3. Stack the halves to create a sequential booklet\n"
+                        "4. Each half will have consecutive pages front/back"
+                    )
+                else:
+                    start_page = 1
+            else:
+                layout_mode = "Sequential"
+                start_page = 1
         else:
             pad_to_exact_size = False
+            two_up_enabled = False
+            layout_mode = "Sequential"
+            start_page = 1
 
         # Page numbering options
         add_page_numbers = st.checkbox(
@@ -638,9 +768,15 @@ def main():
         with col_exp2:
             if st.button("🚀 Generate PDF", type="primary"):
                 with st.spinner("Processing all pages and generating PDF..."):
-                    # Process all pages
+                    # Determine which pages to process
+                    if 'start_page' in locals() and start_page > 1:
+                        page_range = range(start_page - 1, pdf_proc.page_count)  # Convert to 0-indexed
+                    else:
+                        page_range = range(pdf_proc.page_count)
+
+                    # Process selected pages
                     processed_images = []
-                    for page_num in range(pdf_proc.page_count):
+                    for page_num in page_range:
                         # Calculate effective DPI with page size override
                         effective_export_dpi = export_dpi
                         if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
@@ -666,10 +802,18 @@ def main():
                             scaled_font_size = int(page_number_size * effective_export_dpi / 72)
                             scaled_margin = int(page_number_margin * effective_export_dpi / 150)  # Scale margin relative to base DPI
 
+                            # Calculate relative page number for exported pages
+                            if 'start_page' in locals() and start_page > 1:
+                                relative_page_num = page_num - (start_page - 1)
+                                total_exported_pages = pdf_proc.page_count - (start_page - 1)
+                            else:
+                                relative_page_num = page_num
+                                total_exported_pages = pdf_proc.page_count
+
                             img = add_page_number(
                                 img,
-                                page_num,
-                                pdf_proc.page_count,
+                                relative_page_num,
+                                total_exported_pages,
                                 format_style=page_number_format,
                                 font_size=scaled_font_size,
                                 margin=scaled_margin
@@ -682,6 +826,67 @@ def main():
                             img = add_bottom_padding(img, target_height_pixels)
 
                         processed_images.append(img)
+
+                    # Handle 2-up layout if enabled
+                    if two_up_enabled and st.session_state.page_size_override:
+                        target_w, target_h = st.session_state.page_size_override
+                        # For landscape orientation, swap dimensions
+                        landscape_w = target_h  # Height becomes width
+                        landscape_h = target_w  # Width becomes height
+
+                        composite_sheets = []
+
+                        if layout_mode == "Cut & Stack":
+                            # Get page arrangement for cut-and-stack
+                            arrangement = arrange_pages_cut_and_stack(len(processed_images))
+
+                            # Process every 4 pages (one sheet, front and back)
+                            for i in range(0, len(arrangement), 4):
+                                # Get page indices (convert from 1-indexed to 0-indexed)
+                                front_left_idx = arrangement[i] - 1 if arrangement[i] else None
+                                front_right_idx = arrangement[i+1] - 1 if arrangement[i+1] else None
+                                back_left_idx = arrangement[i+2] - 1 if arrangement[i+2] else None
+                                back_right_idx = arrangement[i+3] - 1 if arrangement[i+3] else None
+
+                                # Create front side
+                                front = create_2up_page(
+                                    processed_images[front_left_idx] if front_left_idx is not None else None,
+                                    processed_images[front_right_idx] if front_right_idx is not None else None,
+                                    landscape_w,
+                                    landscape_h,
+                                    export_dpi
+                                )
+                                composite_sheets.append(front)
+
+                                # Create back side
+                                back = create_2up_page(
+                                    processed_images[back_left_idx] if back_left_idx is not None else None,
+                                    processed_images[back_right_idx] if back_right_idx is not None else None,
+                                    landscape_w,
+                                    landscape_h,
+                                    export_dpi
+                                )
+                                composite_sheets.append(back)
+
+                        else:  # Sequential mode
+                            for i in range(0, len(processed_images), 2):
+                                left = processed_images[i]
+                                right = processed_images[i+1] if i+1 < len(processed_images) else None
+                                sheet = create_2up_page(left, right, landscape_w, landscape_h, export_dpi)
+                                composite_sheets.append(sheet)
+
+                        # Use composite sheets for PDF generation
+                        final_images = composite_sheets
+                        # Set target page size to landscape dimensions
+                        final_page_size = (landscape_w * 72, landscape_h * 72)
+                    else:
+                        # Regular single-page layout
+                        final_images = processed_images
+                        if pad_to_exact_size and st.session_state.page_size_override:
+                            target_w, target_h = st.session_state.page_size_override
+                            final_page_size = (target_w * 72, target_h * 72)
+                        else:
+                            final_page_size = None
 
                     # Parse compression settings
                     if compression_format.startswith("JPEG"):
@@ -699,20 +904,17 @@ def main():
                         image_format = "PNG"
                         quality = None
 
-                    # Generate PDF with exact page size if padding is enabled
-                    if pad_to_exact_size and st.session_state.page_size_override:
-                        target_w, target_h = st.session_state.page_size_override
-                        # Convert inches to points (72 points per inch)
-                        target_page_size = (target_w * 72, target_h * 72)
+                    # Generate PDF
+                    if final_page_size:
                         pdf_bytes = PDFProcessor.images_to_pdf(
-                            processed_images,
-                            target_page_size=target_page_size,
+                            final_images,
+                            target_page_size=final_page_size,
                             image_format=image_format,
                             jpeg_quality=quality
                         )
                     else:
                         pdf_bytes = PDFProcessor.images_to_pdf(
-                            processed_images,
+                            final_images,
                             image_format=image_format,
                             jpeg_quality=quality
                         )
