@@ -124,7 +124,8 @@ def create_2up_page(left_img: Optional[Image.Image],
                    right_img: Optional[Image.Image],
                    target_width: float,
                    target_height: float,
-                   dpi: int) -> Image.Image:
+                   dpi: int,
+                   vertical_align: str = "top") -> Image.Image:
     """Create a landscape sheet with two pages side-by-side.
 
     Args:
@@ -133,9 +134,10 @@ def create_2up_page(left_img: Optional[Image.Image],
         target_width: Target width in inches (for landscape, this is the longer dimension)
         target_height: Target height in inches (for landscape, this is the shorter dimension)
         dpi: DPI for output
+        vertical_align: Vertical alignment ("top" or "center")
 
     Returns:
-        Composite image with both pages side-by-side, top-aligned
+        Composite image with both pages side-by-side, vertically aligned as specified
     """
     # Create blank landscape canvas
     sheet_width_px = int(target_width * dpi)
@@ -153,9 +155,15 @@ def create_2up_page(left_img: Optional[Image.Image],
         new_height = int(left_img.height * scale)
         resized = left_img.resize((new_width, new_height), Image.LANCZOS)
 
-        # Top-align in left half, center horizontally within the half
+        # Calculate vertical position based on alignment
+        if vertical_align == "center":
+            y_offset = (sheet_height_px - new_height) // 2
+        else:  # top
+            y_offset = 0
+
+        # Center horizontally within the left half
         x_offset = (half_width - new_width) // 2
-        sheet.paste(resized, (x_offset, 0))
+        sheet.paste(resized, (x_offset, y_offset))
 
     # Place right page if exists
     if right_img:
@@ -165,9 +173,15 @@ def create_2up_page(left_img: Optional[Image.Image],
         new_height = int(right_img.height * scale)
         resized = right_img.resize((new_width, new_height), Image.LANCZOS)
 
-        # Top-align in right half, center horizontally within the half
+        # Calculate vertical position based on alignment
+        if vertical_align == "center":
+            y_offset = (sheet_height_px - new_height) // 2
+        else:  # top
+            y_offset = 0
+
+        # Center horizontally within the right half
         x_offset = half_width + (half_width - new_width) // 2
-        sheet.paste(resized, (x_offset, 0))
+        sheet.paste(resized, (x_offset, y_offset))
 
     return sheet
 
@@ -669,6 +683,14 @@ def main():
             )
 
             if two_up_enabled:
+                # Vertical alignment option
+                vertical_align = st.selectbox(
+                    "Vertical alignment",
+                    options=["Top", "Center"],
+                    index=0,  # Default to Top
+                    help="How to vertically align pages on each half of the sheet"
+                ).lower()
+
                 layout_mode = st.radio(
                     "Layout mode",
                     options=["Sequential", "Cut & Stack"],
@@ -704,11 +726,13 @@ def main():
             else:
                 layout_mode = "Sequential"
                 start_page = 1
+                vertical_align = "top"
         else:
             pad_to_exact_size = False
             two_up_enabled = False
             layout_mode = "Sequential"
             start_page = 1
+            vertical_align = "top"
 
         # Page numbering options
         add_page_numbers = st.checkbox(
@@ -854,7 +878,8 @@ def main():
                                     processed_images[front_right_idx] if front_right_idx is not None else None,
                                     landscape_w,
                                     landscape_h,
-                                    export_dpi
+                                    export_dpi,
+                                    vertical_align
                                 )
                                 composite_sheets.append(front)
 
@@ -864,7 +889,8 @@ def main():
                                     processed_images[back_right_idx] if back_right_idx is not None else None,
                                     landscape_w,
                                     landscape_h,
-                                    export_dpi
+                                    export_dpi,
+                                    vertical_align
                                 )
                                 composite_sheets.append(back)
 
@@ -872,7 +898,7 @@ def main():
                             for i in range(0, len(processed_images), 2):
                                 left = processed_images[i]
                                 right = processed_images[i+1] if i+1 < len(processed_images) else None
-                                sheet = create_2up_page(left, right, landscape_w, landscape_h, export_dpi)
+                                sheet = create_2up_page(left, right, landscape_w, landscape_h, export_dpi, vertical_align)
                                 composite_sheets.append(sheet)
 
                         # Use composite sheets for PDF generation
