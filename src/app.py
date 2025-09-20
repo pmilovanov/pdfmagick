@@ -68,24 +68,50 @@ def calculate_scale_factor(actual_width: float, actual_height: float,
     return min(scale_x, scale_y)
 
 
-def add_bottom_padding(image: Image.Image, target_height: int) -> Image.Image:
-    """Add white padding to the bottom of an image to reach target height.
+def add_padding_for_exact_size(image: Image.Image, target_width: int, target_height: int, page_num: int) -> Image.Image:
+    """Add padding to reach exact target dimensions with alternating horizontal alignment for double-sided printing.
 
     Args:
         image: Input PIL Image
+        target_width: Target width in pixels
         target_height: Target height in pixels
+        page_num: Page number (1-indexed) to determine odd/even alignment
 
     Returns:
-        Padded image if needed, original image if already tall enough
+        Padded image with proper alignment for double-sided printing
     """
-    if image.height >= target_height:
+    # Determine if padding is needed
+    needs_width_padding = image.width < target_width
+    needs_height_padding = image.height < target_height
+
+    # If no padding needed, return original
+    if not needs_width_padding and not needs_height_padding:
         return image
 
-    # Create new image with target height and white background
-    padded = Image.new('RGB', (image.width, target_height), (255, 255, 255))
+    # Use the larger of the two dimensions to avoid clipping
+    final_width = max(image.width, target_width)
+    final_height = max(image.height, target_height)
 
-    # Paste original image at top
-    padded.paste(image, (0, 0))
+    # Create new image with white background
+    padded = Image.new('RGB', (final_width, final_height), (255, 255, 255))
+
+    # Calculate position for pasting
+    if needs_width_padding:
+        # Odd pages (1, 3, 5...): align left (pad right)
+        # Even pages (2, 4, 6...): align right (pad left)
+        if page_num % 2 == 1:  # Odd page - align left
+            x_offset = 0
+        else:  # Even page - align right
+            x_offset = final_width - image.width
+    else:
+        # Center horizontally if no width padding needed
+        x_offset = (final_width - image.width) // 2
+
+    # Always align to top for height
+    y_offset = 0
+
+    # Paste original image at calculated position
+    padded.paste(image, (x_offset, y_offset))
 
     return padded
 
@@ -669,10 +695,11 @@ def main():
         # Show padding option if page size override is active
         if hasattr(st.session_state, 'page_size_override') and st.session_state.page_size_override:
             pad_to_exact_size = st.checkbox(
-                "📏 Pad to exact page size (bottom padding)",
+                "📏 Pad to exact page size (for trimming)",
                 value=True,  # Default to enabled when page size override is active
-                help="Add white padding at the bottom to match exact target page size. "
-                     "This ensures pages only need trimming on one side when printed."
+                help="Add padding to match exact target page size with alternating alignment for double-sided printing. "
+                     "Odd pages align left (pad right), even pages align right (pad left). "
+                     "This ensures proper registration when sheets are flipped along the vertical edge and trimmed."
             )
 
             # 2-up layout option (only available with page size override)
@@ -846,8 +873,10 @@ def main():
                         # Apply padding if enabled and page size override is active
                         if pad_to_exact_size and st.session_state.page_size_override:
                             target_w, target_h = st.session_state.page_size_override
+                            target_width_pixels = int(target_w * export_dpi)
                             target_height_pixels = int(target_h * export_dpi)
-                            img = add_bottom_padding(img, target_height_pixels)
+                            # Use relative page number for odd/even determination
+                            img = add_padding_for_exact_size(img, target_width_pixels, target_height_pixels, relative_page_num)
 
                         processed_images.append(img)
 
