@@ -891,8 +891,9 @@ def main():
                             target_w, target_h = st.session_state.page_size_override
                             target_width_pixels = int(target_w * export_dpi)
                             target_height_pixels = int(target_h * export_dpi)
-                            # Use relative page number for odd/even determination
-                            img = add_padding_for_exact_size(img, target_width_pixels, target_height_pixels, relative_page_num, first_odd_page)
+                            # Convert 0-indexed page_num to 1-indexed for padding alignment
+                            actual_page_num = page_num + 1
+                            img = add_padding_for_exact_size(img, target_width_pixels, target_height_pixels, actual_page_num, first_odd_page)
 
                         processed_images.append(img)
 
