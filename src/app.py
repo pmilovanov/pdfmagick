@@ -68,7 +68,7 @@ def calculate_scale_factor(actual_width: float, actual_height: float,
     return min(scale_x, scale_y)
 
 
-def add_padding_for_exact_size(image: Image.Image, target_width: int, target_height: int, page_num: int) -> Image.Image:
+def add_padding_for_exact_size(image: Image.Image, target_width: int, target_height: int, page_num: int, first_odd_page: int = 1) -> Image.Image:
     """Add padding to reach exact target dimensions with alternating horizontal alignment for double-sided printing.
 
     Args:
@@ -76,6 +76,7 @@ def add_padding_for_exact_size(image: Image.Image, target_width: int, target_hei
         target_width: Target width in pixels
         target_height: Target height in pixels
         page_num: Page number (1-indexed) to determine odd/even alignment
+        first_odd_page: Which page number should be considered the first "odd" page (default=1)
 
     Returns:
         Padded image with proper alignment for double-sided printing
@@ -97,11 +98,11 @@ def add_padding_for_exact_size(image: Image.Image, target_width: int, target_hei
 
     # Calculate position for pasting
     if needs_width_padding:
-        # Odd pages (1, 3, 5...): align left (pad right)
-        # Even pages (2, 4, 6...): align right (pad left)
-        if page_num % 2 == 1:  # Odd page - align left
+        # Determine if this page should align left (odd) or right (even)
+        # based on offset from the first odd page
+        if (page_num - first_odd_page) % 2 == 0:  # This is an "odd" page - align left
             x_offset = 0
-        else:  # Even page - align right
+        else:  # This is an "even" page - align right
             x_offset = final_width - image.width
     else:
         # Center horizontally if no width padding needed
@@ -702,6 +703,20 @@ def main():
                      "This ensures proper registration when sheets are flipped along the vertical edge and trimmed."
             )
 
+            if pad_to_exact_size:
+                first_odd_page = st.number_input(
+                    "First page to align left (odd)",
+                    min_value=1,
+                    max_value=pdf_proc.page_count,
+                    value=1,
+                    step=1,
+                    help="Specify which page starts the left-alignment pattern. "
+                         "This page and every second page after it will align left. "
+                         "Useful when your actual content starts after front matter."
+                )
+            else:
+                first_odd_page = 1
+
             # 2-up layout option (only available with page size override)
             two_up_enabled = st.checkbox(
                 "📖 2-up layout (2 pages per sheet)",
@@ -760,6 +775,7 @@ def main():
             layout_mode = "Sequential"
             start_page = 1
             vertical_align = "top"
+            first_odd_page = 1
 
         # Page numbering options
         add_page_numbers = st.checkbox(
@@ -876,7 +892,7 @@ def main():
                             target_width_pixels = int(target_w * export_dpi)
                             target_height_pixels = int(target_h * export_dpi)
                             # Use relative page number for odd/even determination
-                            img = add_padding_for_exact_size(img, target_width_pixels, target_height_pixels, relative_page_num)
+                            img = add_padding_for_exact_size(img, target_width_pixels, target_height_pixels, relative_page_num, first_odd_page)
 
                         processed_images.append(img)
 
