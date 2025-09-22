@@ -137,12 +137,17 @@ const pdfStore = usePdfStore()
 
 const filters = ref({ ...pdfStore.currentPageFilters })
 
-// Watch for page changes AND filter changes
-watch([() => pdfStore.currentPage, () => pdfStore.currentPageFilters], () => {
+// Watch for page changes to sync the UI
+watch(() => pdfStore.currentPage, () => {
+  filters.value = { ...pdfStore.currentPageFilters }
+})
+
+// Also watch for external filter changes (e.g. from reset)
+watch(() => pdfStore.currentPageFilters, () => {
   filters.value = { ...pdfStore.currentPageFilters }
 }, { deep: true })
 
-// Debounced filter update
+// Debounced filter update - only apply when user changes sliders
 const updateFilters = debounce(() => {
   pdfStore.applyFilters(pdfStore.currentPage, { ...filters.value })
 }, 50)

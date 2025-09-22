@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import time
 import uuid
 from pathlib import Path
 from typing import Dict, Optional
@@ -10,6 +11,11 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSock
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path for core imports
 import sys
@@ -95,6 +101,8 @@ async def render_page(
     quality: int = 85
 ):
     """Render a PDF page as an image."""
+    start_time = time.time()
+
     pdf_proc = cache.get_pdf(pdf_id)
     if not pdf_proc:
         raise HTTPException(status_code=404, detail="PDF not found")
@@ -103,19 +111,31 @@ async def render_page(
         raise HTTPException(status_code=400, detail="Invalid page number")
 
     # Check cache first
+    cache_check_start = time.time()
     image = cache.get_rendered_page(pdf_id, page_num, dpi)
+    cache_hit = image is not None
+    cache_time = time.time() - cache_check_start
+
     if not image:
         # Render and cache
+        render_start = time.time()
         try:
             image = pdf_proc.get_page_as_image(page_num, dpi)
             cache.set_rendered_page(pdf_id, page_num, dpi, image)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Render error: {str(e)}")
+        render_time = time.time() - render_start
+        logger.info(f"Rendered page {page_num} at {dpi}dpi in {render_time:.3f}s (size: {image.size})")
+    else:
+        render_time = 0
+        logger.info(f"Cache hit for page {page_num} at {dpi}dpi (cache check: {cache_time:.3f}s)")
 
     # Convert to requested format
+    encode_start = time.time()
     img_bytes = io.BytesIO()
     if format == "webp":
-        image.save(img_bytes, format='WEBP', quality=quality, method=6)
+        # Use method=0 for fastest encoding (still good quality for previews)
+        image.save(img_bytes, format='WEBP', quality=quality, method=0)
         media_type = "image/webp"
     elif format == "jpeg":
         if image.mode == 'RGBA':
@@ -128,8 +148,20 @@ async def render_page(
         image.save(img_bytes, format='PNG', optimize=True)
         media_type = "image/png"
 
+    encode_time = time.time() - encode_start
+    total_time = time.time() - start_time
+
+    logger.info(f"Page {page_num} total: {total_time:.3f}s (render: {render_time:.3f}s, encode {format}: {encode_time:.3f}s, cache: {'HIT' if cache_hit else 'MISS'})")
+
     img_bytes.seek(0)
-    return StreamingResponse(img_bytes, media_type=media_type)
+
+    # Add cache headers for browser caching
+    headers = {
+        "Cache-Control": "private, max-age=3600",  # Cache for 1 hour
+        "ETag": f"{pdf_id}-{page_num}-{dpi}-{format}-{quality}"
+    }
+
+    return StreamingResponse(img_bytes, media_type=media_type, headers=headers)
 
 
 @app.post("/api/pdf/{pdf_id}/page/{page_num}/filter")
@@ -139,6 +171,9 @@ async def apply_filters(
     request: PageFilterRequest
 ):
     """Apply filters to a PDF page and return the processed image."""
+    start_time = time.time()
+    logger.info(f"Applying filters to page {page_num} at {request.dpi}dpi")
+
     pdf_proc = cache.get_pdf(pdf_id)
     if not pdf_proc:
         raise HTTPException(status_code=404, detail="PDF not found")
@@ -148,16 +183,24 @@ async def apply_filters(
 
     # Check filter cache first
     filter_dict = request.filters.dict()
+    cache_start = time.time()
     filtered_image = cache.get_filtered_image(pdf_id, page_num, request.dpi, filter_dict)
+    cache_time = time.time() - cache_start
+    filter_cache_hit = filtered_image is not None
 
     if not filtered_image:
         # Get rendered page (from cache or render)
+        render_start = time.time()
         base_image = cache.get_rendered_page(pdf_id, page_num, request.dpi)
+        base_cache_hit = base_image is not None
+
         if not base_image:
             base_image = pdf_proc.get_page_as_image(page_num, request.dpi)
             cache.set_rendered_page(pdf_id, page_num, request.dpi, base_image)
+        render_time = time.time() - render_start
 
         # Apply filters
+        filter_start = time.time()
         try:
             filtered_image = ImageFilters.apply_all_adjustments(
                 base_image,
@@ -167,11 +210,18 @@ async def apply_filters(
             cache.set_filtered_image(pdf_id, page_num, request.dpi, filter_dict, filtered_image)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Filter error: {str(e)}")
+        filter_time = time.time() - filter_start
+
+        logger.info(f"Filter processing: render {render_time:.3f}s (cache: {base_cache_hit}), filter {filter_time:.3f}s")
+    else:
+        logger.info(f"Filter cache HIT (lookup: {cache_time:.3f}s)")
 
     # Convert to requested format
+    encode_start = time.time()
     img_bytes = io.BytesIO()
     if request.format == "webp":
-        filtered_image.save(img_bytes, format='WEBP', quality=request.quality, method=6)
+        # Use method=0 for fastest encoding (still good quality for previews)
+        filtered_image.save(img_bytes, format='WEBP', quality=request.quality, method=0)
         media_type = "image/webp"
     elif request.format == "jpeg":
         if filtered_image.mode == 'RGBA':
@@ -183,6 +233,11 @@ async def apply_filters(
     else:  # png
         filtered_image.save(img_bytes, format='PNG', optimize=True)
         media_type = "image/png"
+
+    encode_time = time.time() - encode_start
+    total_time = time.time() - start_time
+
+    logger.info(f"Filter total: {total_time:.3f}s (encode {request.format}: {encode_time:.3f}s, filter cache: {'HIT' if filter_cache_hit else 'MISS'})")
 
     img_bytes.seek(0)
     return StreamingResponse(img_bytes, media_type=media_type)

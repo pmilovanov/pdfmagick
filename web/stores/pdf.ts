@@ -46,6 +46,23 @@ export const usePdfStore = defineStore('pdf', {
     },
     hasFilters(): boolean {
       return this.pageFilters.size > 0
+    },
+    effectiveDpi(): number {
+      // Calculate effective DPI for current page to avoid huge images
+      if (!this.pdfInfo || this.currentPage >= this.pdfInfo.page_dimensions.length) {
+        return 150
+      }
+
+      const pageDim = this.pdfInfo.page_dimensions[this.currentPage]
+      const maxDimension = Math.max(pageDim.width_inches, pageDim.height_inches)
+
+      // Scale down DPI for very large pages to keep preview manageable
+      // Target max dimension of ~2000px for preview
+      if (maxDimension > 13.3) {  // Would be >2000px at 150 DPI
+        return Math.floor(2000 / maxDimension)
+      }
+
+      return 150
     }
   },
 
@@ -94,30 +111,19 @@ export const usePdfStore = defineStore('pdf', {
     async loadPage(pageNum: number) {
       if (!this.pdfInfo) return
 
-      // Check if already loaded
-      if (this.originalImages.has(pageNum)) {
-        // Page already loaded, check if we have the processed version
-        if (!this.processedImages.has(pageNum)) {
-          // Only apply filters if they're non-default
-          const filters = this.pageFilters.get(pageNum)
-          if (filters && JSON.stringify(filters) !== JSON.stringify(this.getDefaultFilters())) {
-            await this.applyFilters(pageNum, filters)
-          } else {
-            // Use original as processed for default filters
-            const originalUrl = this.originalImages.get(pageNum)
-            if (originalUrl) {
-              this.processedImages.set(pageNum, originalUrl)
-            }
-          }
-        }
-        return
-      }
+      const startTime = performance.now()
 
-      // Load new page
-      this.isLoading = true
+      // Don't show loading spinner for page switches
       try {
-        // Load original image
-        const originalUrl = `/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/render?dpi=150&format=webp&quality=85`
+        // Calculate DPI for preview (target ~700px tall for display)
+        const pageDim = this.pdfInfo.page_dimensions[pageNum]
+        const targetHeight = 700  // pixels for preview
+        const dpi = Math.min(Math.floor(targetHeight / pageDim.height_inches), 100)  // Cap at 100 DPI for previews
+
+        // Build URL directly to FastAPI with lower quality for faster loading
+        const originalUrl = `http://localhost:8000/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/render?dpi=${dpi}&format=jpeg&quality=70`
+
+        // Just set the URL without preloading
         this.originalImages.set(pageNum, originalUrl)
 
         // Check if page has custom filters
@@ -129,8 +135,11 @@ export const usePdfStore = defineStore('pdf', {
           // Use original as processed for default filters
           this.processedImages.set(pageNum, originalUrl)
         }
-      } finally {
-        this.isLoading = false
+
+        const totalTime = performance.now() - startTime
+        console.log(`Page ${pageNum} total client time: ${totalTime.toFixed(0)}ms (DPI: ${dpi})`)
+      } catch (error) {
+        console.error('Failed to load page:', error)
       }
     },
 
@@ -151,13 +160,18 @@ export const usePdfStore = defineStore('pdf', {
 
       // Apply filters via API
       try {
+        // Calculate DPI for preview (target ~700px tall for display)
+        const pageDim = this.pdfInfo.page_dimensions[pageNum]
+        const targetHeight = 700  // pixels for preview
+        const dpi = Math.min(Math.floor(targetHeight / pageDim.height_inches), 100)  // Cap at 100 DPI for previews
+
         const response = await $fetch(`/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/filter`, {
           method: 'POST',
           body: {
             filters,
-            dpi: 150,
-            format: 'webp',
-            quality: 85
+            dpi,
+            format: 'jpeg',
+            quality: 70
           }
         })
 
@@ -173,40 +187,11 @@ export const usePdfStore = defineStore('pdf', {
     setCurrentPage(pageNum: number) {
       if (pageNum >= 0 && this.pdfInfo && pageNum < this.pdfInfo.page_count) {
         this.currentPage = pageNum
-
-        // Only load page if not already loaded
-        if (!this.originalImages.has(pageNum)) {
-          this.loadPage(pageNum)
-        }
-
-        // Preload adjacent pages in background for smoother navigation
-        this.preloadAdjacentPages(pageNum)
+        // Load the page
+        this.loadPage(pageNum)
       }
     },
 
-    preloadAdjacentPages(currentPage: number) {
-      if (!this.pdfInfo) return
-
-      // Preload next and previous pages in background
-      const pagesToPreload = [currentPage - 1, currentPage + 1]
-
-      pagesToPreload.forEach(pageNum => {
-        if (pageNum >= 0 && pageNum < this.pdfInfo!.page_count && !this.originalImages.has(pageNum)) {
-          // Load in background without blocking
-          setTimeout(() => {
-            if (!this.originalImages.has(pageNum)) {
-              const originalUrl = `/api/pdf/${this.pdfInfo!.pdf_id}/page/${pageNum}/render?dpi=150&format=webp&quality=85`
-              this.originalImages.set(pageNum, originalUrl)
-
-              // If page has no custom filters, set processed same as original
-              if (!this.pageFilters.has(pageNum)) {
-                this.processedImages.set(pageNum, originalUrl)
-              }
-            }
-          }, 100)
-        }
-      })
-    },
 
     async copyFiltersToAllPages() {
       if (!this.pdfInfo) return

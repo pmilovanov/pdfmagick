@@ -22,7 +22,7 @@ class FilterSettings(BaseModel):
 
 class PageRenderRequest(BaseModel):
     """Request for rendering a PDF page."""
-    dpi: int = Field(default=150, ge=72, le=600)
+    dpi: int = Field(default=150, ge=30, le=600)  # Allow low DPI for efficient previews
     format: str = Field(default="webp", pattern="^(webp|jpeg|png)$")
     quality: int = Field(default=85, ge=1, le=100)
 
@@ -30,7 +30,7 @@ class PageRenderRequest(BaseModel):
 class PageFilterRequest(BaseModel):
     """Request for applying filters to a page."""
     filters: FilterSettings
-    dpi: int = Field(default=150, ge=72, le=600)
+    dpi: int = Field(default=150, ge=30, le=600)  # Allow low DPI for efficient previews
     format: str = Field(default="webp", pattern="^(webp|jpeg|png)$")
     quality: int = Field(default=85, ge=1, le=100)
 

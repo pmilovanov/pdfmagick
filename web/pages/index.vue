@@ -28,6 +28,7 @@
     <div v-if="pdfStore.pdfInfo" class="editor-main">
       <!-- Sidebar Controls -->
       <aside class="editor-sidebar">
+        <PDFDetails :show-advanced="true" />
         <PageNavigator />
         <FilterPanel />
       </aside>
