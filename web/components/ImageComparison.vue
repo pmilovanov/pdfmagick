@@ -36,9 +36,9 @@
       </div>
     </div>
 
-    <!-- Status Bar -->
-    <div v-if="hasFilters" class="status-bar">
-      ✅ Filters applied to this page
+    <!-- Status Bar (always present to prevent layout shift) -->
+    <div class="status-bar" :class="{ 'status-bar-active': hasFilters }">
+      <span v-if="hasFilters">✅ Filters applied to this page</span>
     </div>
   </div>
 </template>
@@ -126,12 +126,18 @@ const hasFilters = computed(() => {
 
 .status-bar {
   margin-top: 1rem;
-  padding: 0.75rem;
-  background: #34c759;
-  color: white;
+  height: 42px; /* Fixed height to prevent layout shift */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
-  text-align: center;
   font-size: 0.875rem;
   font-weight: 500;
+  transition: background-color 0.2s ease;
+}
+
+.status-bar-active {
+  background: #34c759;
+  color: white;
 }
 </style>

@@ -35,6 +35,8 @@ export const usePdfStore = defineStore('pdf', {
     originalImages: new Map<number, string>(),
     processedImages: new Map<number, string>(),
     isLoading: false,
+    loadingMessage: '',
+    loadingProgress: null as number | null,
     wsConnection: null as WebSocket | null
   }),
 
@@ -179,6 +181,9 @@ export const usePdfStore = defineStore('pdf', {
       if (!this.pdfInfo) return
 
       this.isLoading = true
+      this.loadingMessage = 'Auto-enhancing all pages'
+      this.loadingProgress = 0
+
       try {
         // Simple auto-enhance settings for all pages
         const enhancedFilters: FilterSettings = {
@@ -189,16 +194,28 @@ export const usePdfStore = defineStore('pdf', {
           white_point: 245
         }
 
-        // Apply to all pages
-        for (let i = 0; i < this.pdfInfo.page_count; i++) {
+        const totalPages = this.pdfInfo.page_count
+
+        // Apply to all pages with progress
+        for (let i = 0; i < totalPages; i++) {
           this.pageFilters.set(i, { ...enhancedFilters })
+
+          // Update progress
+          this.loadingProgress = ((i + 1) / totalPages) * 100
+          this.loadingMessage = `Enhancing page ${i + 1} of ${totalPages}`
+
           // If it's the current page, apply immediately
           if (i === this.currentPage) {
             await this.applyFilters(i, enhancedFilters)
           }
+
+          // Small delay to show progress
+          await new Promise(resolve => setTimeout(resolve, 50))
         }
       } finally {
         this.isLoading = false
+        this.loadingMessage = ''
+        this.loadingProgress = null
       }
     },
 

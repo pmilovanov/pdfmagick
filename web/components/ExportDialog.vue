@@ -200,6 +200,12 @@ const exportPdf = async () => {
   if (!pdfStore.pdfInfo || isExporting.value) return
 
   isExporting.value = true
+
+  // Show progress overlay
+  pdfStore.isLoading = true
+  pdfStore.loadingMessage = 'Preparing export...'
+  pdfStore.loadingProgress = null
+
   try {
     // Prepare page filters
     const pageFilters: Record<number, any> = {}
@@ -226,6 +232,10 @@ const exportPdf = async () => {
       page_number_margin: exportSettings.value.pageNumberMargin
     }
 
+    // Update progress
+    pdfStore.loadingMessage = 'Generating PDF...'
+    pdfStore.loadingProgress = 20
+
     // Download the exported PDF
     const response = await fetch(`/api/pdf/${pdfStore.pdfInfo.pdf_id}/export`, {
       method: 'POST',
@@ -239,6 +249,9 @@ const exportPdf = async () => {
       throw new Error('Export failed')
     }
 
+    pdfStore.loadingMessage = 'Downloading...'
+    pdfStore.loadingProgress = 80
+
     const blob = await response.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -247,12 +260,18 @@ const exportPdf = async () => {
     a.click()
     URL.revokeObjectURL(url)
 
+    pdfStore.loadingProgress = 100
+    await new Promise(resolve => setTimeout(resolve, 200)) // Brief pause to show completion
+
     close()
   } catch (error) {
     console.error('Export failed:', error)
     alert('Export failed. Please try again.')
   } finally {
     isExporting.value = false
+    pdfStore.isLoading = false
+    pdfStore.loadingMessage = ''
+    pdfStore.loadingProgress = null
   }
 }
 </script>

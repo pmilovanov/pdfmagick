@@ -54,12 +54,20 @@
       :visible="showExportDialog"
       @close="showExportDialog = false"
     />
+
+    <!-- Progress Overlay -->
+    <ProgressOverlay
+      :visible="pdfStore.isLoading"
+      :title="pdfStore.loadingMessage || 'Processing...'"
+      :progress="pdfStore.loadingProgress"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { usePdfStore } from '~/stores/pdf'
 import ExportDialog from '~/components/ExportDialog.vue'
+import ProgressOverlay from '~/components/ProgressOverlay.vue'
 
 const pdfStore = usePdfStore()
 const fileInput = ref<HTMLInputElement>()
