@@ -94,6 +94,17 @@ export const usePdfStore = defineStore('pdf', {
     async loadPage(pageNum: number) {
       if (!this.pdfInfo) return
 
+      // Check if already loaded
+      if (this.originalImages.has(pageNum)) {
+        // Page already loaded, just apply filters if needed
+        const filters = this.pageFilters.get(pageNum) || this.getDefaultFilters()
+        if (!this.processedImages.has(pageNum) || this.pageFilters.has(pageNum)) {
+          await this.applyFilters(pageNum, filters)
+        }
+        return
+      }
+
+      // Load new page
       this.isLoading = true
       try {
         // Load original image
@@ -164,9 +175,13 @@ export const usePdfStore = defineStore('pdf', {
       }
     },
 
-    resetCurrentPage() {
+    async resetCurrentPage() {
       this.pageFilters.delete(this.currentPage)
-      this.loadPage(this.currentPage)
+      this.processedImages.delete(this.currentPage)
+
+      // Reset to default and reload
+      const defaultFilters = this.getDefaultFilters()
+      await this.applyFilters(this.currentPage, defaultFilters)
     },
 
     resetAllPages() {
@@ -204,14 +219,14 @@ export const usePdfStore = defineStore('pdf', {
           this.loadingProgress = ((i + 1) / totalPages) * 100
           this.loadingMessage = `Enhancing page ${i + 1} of ${totalPages}`
 
-          // If it's the current page, apply immediately
-          if (i === this.currentPage) {
-            await this.applyFilters(i, enhancedFilters)
+          // Small delay to show progress only for multiple pages
+          if (totalPages > 1) {
+            await new Promise(resolve => setTimeout(resolve, 20))
           }
-
-          // Small delay to show progress
-          await new Promise(resolve => setTimeout(resolve, 50))
         }
+
+        // Apply filters to current page after all settings are saved
+        await this.applyFilters(this.currentPage, enhancedFilters)
       } finally {
         this.isLoading = false
         this.loadingMessage = ''

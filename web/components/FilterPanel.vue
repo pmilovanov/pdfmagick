@@ -135,12 +135,12 @@ import { debounce } from 'lodash-es'
 
 const pdfStore = usePdfStore()
 
-const filters = ref(pdfStore.currentPageFilters)
+const filters = ref({ ...pdfStore.currentPageFilters })
 
-// Watch for page changes
-watch(() => pdfStore.currentPage, () => {
+// Watch for page changes AND filter changes
+watch([() => pdfStore.currentPage, () => pdfStore.currentPageFilters], () => {
   filters.value = { ...pdfStore.currentPageFilters }
-})
+}, { deep: true })
 
 // Debounced filter update
 const updateFilters = debounce(() => {
