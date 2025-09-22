@@ -96,10 +96,19 @@ export const usePdfStore = defineStore('pdf', {
 
       // Check if already loaded
       if (this.originalImages.has(pageNum)) {
-        // Page already loaded, just apply filters if needed
-        const filters = this.pageFilters.get(pageNum) || this.getDefaultFilters()
-        if (!this.processedImages.has(pageNum) || this.pageFilters.has(pageNum)) {
-          await this.applyFilters(pageNum, filters)
+        // Page already loaded, check if we have the processed version
+        if (!this.processedImages.has(pageNum)) {
+          // Only apply filters if they're non-default
+          const filters = this.pageFilters.get(pageNum)
+          if (filters && JSON.stringify(filters) !== JSON.stringify(this.getDefaultFilters())) {
+            await this.applyFilters(pageNum, filters)
+          } else {
+            // Use original as processed for default filters
+            const originalUrl = this.originalImages.get(pageNum)
+            if (originalUrl) {
+              this.processedImages.set(pageNum, originalUrl)
+            }
+          }
         }
         return
       }
@@ -111,9 +120,15 @@ export const usePdfStore = defineStore('pdf', {
         const originalUrl = `/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/render?dpi=150&format=webp&quality=85`
         this.originalImages.set(pageNum, originalUrl)
 
-        // Load processed image with current filters
-        const filters = this.pageFilters.get(pageNum) || this.getDefaultFilters()
-        await this.applyFilters(pageNum, filters)
+        // Check if page has custom filters
+        const filters = this.pageFilters.get(pageNum)
+        if (filters && JSON.stringify(filters) !== JSON.stringify(this.getDefaultFilters())) {
+          // Apply custom filters
+          await this.applyFilters(pageNum, filters)
+        } else {
+          // Use original as processed for default filters
+          this.processedImages.set(pageNum, originalUrl)
+        }
       } finally {
         this.isLoading = false
       }
@@ -159,11 +174,38 @@ export const usePdfStore = defineStore('pdf', {
       if (pageNum >= 0 && this.pdfInfo && pageNum < this.pdfInfo.page_count) {
         this.currentPage = pageNum
 
-        // Load page if not already loaded
+        // Only load page if not already loaded
         if (!this.originalImages.has(pageNum)) {
           this.loadPage(pageNum)
         }
+
+        // Preload adjacent pages in background for smoother navigation
+        this.preloadAdjacentPages(pageNum)
       }
+    },
+
+    preloadAdjacentPages(currentPage: number) {
+      if (!this.pdfInfo) return
+
+      // Preload next and previous pages in background
+      const pagesToPreload = [currentPage - 1, currentPage + 1]
+
+      pagesToPreload.forEach(pageNum => {
+        if (pageNum >= 0 && pageNum < this.pdfInfo!.page_count && !this.originalImages.has(pageNum)) {
+          // Load in background without blocking
+          setTimeout(() => {
+            if (!this.originalImages.has(pageNum)) {
+              const originalUrl = `/api/pdf/${this.pdfInfo!.pdf_id}/page/${pageNum}/render?dpi=150&format=webp&quality=85`
+              this.originalImages.set(pageNum, originalUrl)
+
+              // If page has no custom filters, set processed same as original
+              if (!this.pageFilters.has(pageNum)) {
+                this.processedImages.set(pageNum, originalUrl)
+              }
+            }
+          }, 100)
+        }
+      })
     },
 
     async copyFiltersToAllPages() {
