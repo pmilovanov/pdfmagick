@@ -1,0 +1,229 @@
+import { defineStore } from 'pinia'
+
+export interface FilterSettings {
+  brightness: number
+  contrast: number
+  highlights: number
+  midtones: number
+  shadows: number
+  exposure: number
+  saturation: number
+  vibrance: number
+  sharpness: number
+  black_point: number
+  white_point: number
+  gamma: number
+}
+
+export interface PDFInfo {
+  pdf_id: string
+  filename: string
+  page_count: number
+  page_dimensions: Array<{
+    width: number
+    height: number
+    width_inches: number
+    height_inches: number
+  }>
+}
+
+export const usePdfStore = defineStore('pdf', {
+  state: () => ({
+    pdfInfo: null as PDFInfo | null,
+    currentPage: 0,
+    pageFilters: new Map<number, FilterSettings>(),
+    originalImages: new Map<number, string>(),
+    processedImages: new Map<number, string>(),
+    isLoading: false,
+    wsConnection: null as WebSocket | null
+  }),
+
+  getters: {
+    currentPageFilters(): FilterSettings {
+      return this.pageFilters.get(this.currentPage) || this.getDefaultFilters()
+    },
+    hasFilters(): boolean {
+      return this.pageFilters.size > 0
+    }
+  },
+
+  actions: {
+    getDefaultFilters(): FilterSettings {
+      return {
+        brightness: 0,
+        contrast: 0,
+        highlights: 0,
+        midtones: 0,
+        shadows: 0,
+        exposure: 0,
+        saturation: 0,
+        vibrance: 0,
+        sharpness: 0,
+        black_point: 0,
+        white_point: 255,
+        gamma: 1.0
+      }
+    },
+
+    async uploadPdf(file: File) {
+      this.isLoading = true
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+
+        const response = await $fetch<PDFInfo>('/api/pdf/upload', {
+          method: 'POST',
+          body: formData
+        })
+
+        this.pdfInfo = response
+        this.currentPage = 0
+        this.pageFilters.clear()
+        this.originalImages.clear()
+        this.processedImages.clear()
+
+        // Load first page
+        await this.loadPage(0)
+      } finally {
+        this.isLoading = false
+      }
+    },
+
+    async loadPage(pageNum: number) {
+      if (!this.pdfInfo) return
+
+      this.isLoading = true
+      try {
+        // Load original image
+        const originalUrl = `/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/render?dpi=150&format=webp&quality=85`
+        this.originalImages.set(pageNum, originalUrl)
+
+        // Load processed image with current filters
+        const filters = this.pageFilters.get(pageNum) || this.getDefaultFilters()
+        await this.applyFilters(pageNum, filters)
+      } finally {
+        this.isLoading = false
+      }
+    },
+
+    async applyFilters(pageNum: number, filters: FilterSettings) {
+      if (!this.pdfInfo) return
+
+      // Save filters
+      this.pageFilters.set(pageNum, filters)
+
+      // If filters are default, just use original
+      if (JSON.stringify(filters) === JSON.stringify(this.getDefaultFilters())) {
+        const originalUrl = this.originalImages.get(pageNum)
+        if (originalUrl) {
+          this.processedImages.set(pageNum, originalUrl)
+        }
+        return
+      }
+
+      // Apply filters via API
+      try {
+        const response = await $fetch(`/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/filter`, {
+          method: 'POST',
+          body: {
+            filters,
+            dpi: 150,
+            format: 'webp',
+            quality: 85
+          }
+        })
+
+        // The response is a blob, convert to URL
+        const blob = response as Blob
+        const url = URL.createObjectURL(blob)
+        this.processedImages.set(pageNum, url)
+      } catch (error) {
+        console.error('Failed to apply filters:', error)
+      }
+    },
+
+    setCurrentPage(pageNum: number) {
+      if (pageNum >= 0 && this.pdfInfo && pageNum < this.pdfInfo.page_count) {
+        this.currentPage = pageNum
+
+        // Load page if not already loaded
+        if (!this.originalImages.has(pageNum)) {
+          this.loadPage(pageNum)
+        }
+      }
+    },
+
+    async copyFiltersToAllPages() {
+      if (!this.pdfInfo) return
+
+      const currentFilters = this.currentPageFilters
+      for (let i = 0; i < this.pdfInfo.page_count; i++) {
+        this.pageFilters.set(i, { ...currentFilters })
+      }
+    },
+
+    resetCurrentPage() {
+      this.pageFilters.delete(this.currentPage)
+      this.loadPage(this.currentPage)
+    },
+
+    resetAllPages() {
+      this.pageFilters.clear()
+      this.processedImages.clear()
+      if (this.currentPage !== undefined) {
+        this.loadPage(this.currentPage)
+      }
+    },
+
+    async autoEnhanceAllPages() {
+      if (!this.pdfInfo) return
+
+      this.isLoading = true
+      try {
+        // Simple auto-enhance settings for all pages
+        const enhancedFilters: FilterSettings = {
+          ...this.getDefaultFilters(),
+          contrast: 5,
+          brightness: 2,
+          black_point: 10,
+          white_point: 245
+        }
+
+        // Apply to all pages
+        for (let i = 0; i < this.pdfInfo.page_count; i++) {
+          this.pageFilters.set(i, { ...enhancedFilters })
+          // If it's the current page, apply immediately
+          if (i === this.currentPage) {
+            await this.applyFilters(i, enhancedFilters)
+          }
+        }
+      } finally {
+        this.isLoading = false
+      }
+    },
+
+    initWebSocket() {
+      const clientId = Math.random().toString(36).substring(7)
+      this.wsConnection = new WebSocket(`ws://localhost:8000/ws/preview/${clientId}`)
+
+      this.wsConnection.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (data.type === 'filter_complete' && data.page !== undefined) {
+          // Update processed image
+          this.processedImages.set(data.page, data.data.image_url)
+        }
+      }
+
+      this.wsConnection.onerror = (error) => {
+        console.error('WebSocket error:', error)
+      }
+    },
+
+    closeWebSocket() {
+      if (this.wsConnection) {
+        this.wsConnection.close()
+        this.wsConnection = null
+      }
+    }
+  }
+})

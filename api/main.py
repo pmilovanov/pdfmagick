@@ -1,0 +1,336 @@
+"""FastAPI backend for PDFMagick."""
+
+import hashlib
+import io
+import uuid
+from pathlib import Path
+from typing import Dict, Optional
+
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+
+# Add parent directory to path for core imports
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core import PDFProcessor, ImageFilters
+from core.cache_manager import CacheManager
+from api.models import (
+    FilterSettings, PageRenderRequest, PageFilterRequest,
+    PDFInfo, ExportRequest, CacheStats, WebSocketMessage
+)
+
+app = FastAPI(title="PDFMagick API", version="1.0.0")
+
+# Configure CORS for Vue frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Vue dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize cache manager (singleton)
+cache = CacheManager()
+
+# Active WebSocket connections
+active_connections: Dict[str, WebSocket] = {}
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"status": "running", "service": "PDFMagick API"}
+
+
+@app.post("/api/pdf/upload", response_model=PDFInfo)
+async def upload_pdf(file: UploadFile = File(...)):
+    """Upload a PDF file and get its information."""
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    # Generate unique PDF ID
+    pdf_content = await file.read()
+    pdf_id = hashlib.md5(pdf_content).hexdigest()[:12]
+
+    # Check if already cached
+    if cache.get_pdf(pdf_id):
+        pdf_proc = cache.get_pdf(pdf_id)
+    else:
+        # Create PDF processor and cache it
+        try:
+            pdf_proc = PDFProcessor(pdf_bytes=pdf_content)
+            cache.set_pdf(pdf_id, pdf_proc)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid PDF: {str(e)}")
+
+    # Get page dimensions
+    page_dimensions = []
+    for i in range(pdf_proc.page_count):
+        width, height = pdf_proc.get_page_dimensions(i)
+        page_dimensions.append({
+            "width": width,
+            "height": height,
+            "width_inches": width / 72,
+            "height_inches": height / 72
+        })
+
+    return PDFInfo(
+        pdf_id=pdf_id,
+        filename=file.filename,
+        page_count=pdf_proc.page_count,
+        page_dimensions=page_dimensions
+    )
+
+
+@app.get("/api/pdf/{pdf_id}/page/{page_num}/render")
+async def render_page(
+    pdf_id: str,
+    page_num: int,
+    dpi: int = 150,
+    format: str = "webp",
+    quality: int = 85
+):
+    """Render a PDF page as an image."""
+    pdf_proc = cache.get_pdf(pdf_id)
+    if not pdf_proc:
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    if page_num < 0 or page_num >= pdf_proc.page_count:
+        raise HTTPException(status_code=400, detail="Invalid page number")
+
+    # Check cache first
+    image = cache.get_rendered_page(pdf_id, page_num, dpi)
+    if not image:
+        # Render and cache
+        try:
+            image = pdf_proc.get_page_as_image(page_num, dpi)
+            cache.set_rendered_page(pdf_id, page_num, dpi, image)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Render error: {str(e)}")
+
+    # Convert to requested format
+    img_bytes = io.BytesIO()
+    if format == "webp":
+        image.save(img_bytes, format='WEBP', quality=quality, method=6)
+        media_type = "image/webp"
+    elif format == "jpeg":
+        if image.mode == 'RGBA':
+            rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+            rgb_image.paste(image, mask=image.split()[3])
+            image = rgb_image
+        image.save(img_bytes, format='JPEG', quality=quality, optimize=True)
+        media_type = "image/jpeg"
+    else:  # png
+        image.save(img_bytes, format='PNG', optimize=True)
+        media_type = "image/png"
+
+    img_bytes.seek(0)
+    return StreamingResponse(img_bytes, media_type=media_type)
+
+
+@app.post("/api/pdf/{pdf_id}/page/{page_num}/filter")
+async def apply_filters(
+    pdf_id: str,
+    page_num: int,
+    request: PageFilterRequest
+):
+    """Apply filters to a PDF page and return the processed image."""
+    pdf_proc = cache.get_pdf(pdf_id)
+    if not pdf_proc:
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    if page_num < 0 or page_num >= pdf_proc.page_count:
+        raise HTTPException(status_code=400, detail="Invalid page number")
+
+    # Check filter cache first
+    filter_dict = request.filters.dict()
+    filtered_image = cache.get_filtered_image(pdf_id, page_num, request.dpi, filter_dict)
+
+    if not filtered_image:
+        # Get rendered page (from cache or render)
+        base_image = cache.get_rendered_page(pdf_id, page_num, request.dpi)
+        if not base_image:
+            base_image = pdf_proc.get_page_as_image(page_num, request.dpi)
+            cache.set_rendered_page(pdf_id, page_num, request.dpi, base_image)
+
+        # Apply filters
+        try:
+            filtered_image = ImageFilters.apply_all_adjustments(
+                base_image,
+                **filter_dict
+            )
+            # Cache the result
+            cache.set_filtered_image(pdf_id, page_num, request.dpi, filter_dict, filtered_image)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Filter error: {str(e)}")
+
+    # Convert to requested format
+    img_bytes = io.BytesIO()
+    if request.format == "webp":
+        filtered_image.save(img_bytes, format='WEBP', quality=request.quality, method=6)
+        media_type = "image/webp"
+    elif request.format == "jpeg":
+        if filtered_image.mode == 'RGBA':
+            rgb_image = Image.new('RGB', filtered_image.size, (255, 255, 255))
+            rgb_image.paste(filtered_image, mask=filtered_image.split()[3])
+            filtered_image = rgb_image
+        filtered_image.save(img_bytes, format='JPEG', quality=request.quality, optimize=True)
+        media_type = "image/jpeg"
+    else:  # png
+        filtered_image.save(img_bytes, format='PNG', optimize=True)
+        media_type = "image/png"
+
+    img_bytes.seek(0)
+    return StreamingResponse(img_bytes, media_type=media_type)
+
+
+@app.post("/api/pdf/{pdf_id}/export")
+async def export_pdf(pdf_id: str, request: ExportRequest):
+    """Export the processed PDF with all filters applied."""
+    pdf_proc = cache.get_pdf(pdf_id)
+    if not pdf_proc:
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    processed_images = []
+
+    # Process each page
+    for page_num in range(pdf_proc.page_count):
+        # Skip pages before start_page if specified
+        if request.start_page > 1 and page_num < request.start_page - 1:
+            continue
+
+        # Get page at export DPI
+        image = pdf_proc.get_page_as_image(page_num, request.dpi)
+
+        # Apply filters if specified for this page
+        if page_num in request.page_filters:
+            filter_settings = request.page_filters[page_num]
+            image = ImageFilters.apply_all_adjustments(
+                image,
+                **filter_settings.dict()
+            )
+
+        # Add page number if requested
+        if request.add_page_numbers:
+            # Implementation would go here (simplified for now)
+            pass
+
+        # Apply padding if requested
+        if request.pad_to_exact_size and request.target_page_size:
+            # Implementation would go here (simplified for now)
+            pass
+
+        processed_images.append(image)
+
+    # Handle 2-up layout if enabled
+    if request.two_up_enabled and request.target_page_size:
+        # Implementation would go here (simplified for now)
+        pass
+
+    # Generate PDF
+    try:
+        # Calculate target page size in points
+        target_size = None
+        if request.target_page_size:
+            target_size = (request.target_page_size[0] * 72, request.target_page_size[1] * 72)
+
+        pdf_bytes = PDFProcessor.images_to_pdf(
+            processed_images,
+            target_page_size=target_size,
+            image_format=request.image_format.upper(),
+            jpeg_quality=request.jpeg_quality
+        )
+
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=processed_{pdf_id}.pdf"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
+
+
+@app.get("/api/cache/stats", response_model=CacheStats)
+async def get_cache_stats():
+    """Get cache statistics."""
+    stats = cache.get_stats()
+    return CacheStats(**stats)
+
+
+@app.delete("/api/cache/clear/{pdf_id}")
+async def clear_pdf_cache(pdf_id: str):
+    """Clear cache for a specific PDF."""
+    cache.clear_pdf_cache(pdf_id)
+    return {"message": f"Cache cleared for PDF {pdf_id}"}
+
+
+@app.websocket("/ws/preview/{client_id}")
+async def websocket_preview(websocket: WebSocket, client_id: str):
+    """WebSocket endpoint for real-time preview updates."""
+    await websocket.accept()
+    active_connections[client_id] = websocket
+
+    try:
+        while True:
+            # Receive filter update request
+            data = await websocket.receive_json()
+
+            if data.get("type") == "filter_update":
+                pdf_id = data.get("pdf_id")
+                page_num = data.get("page_num")
+                filters = FilterSettings(**data.get("filters", {}))
+                dpi = data.get("dpi", 150)
+
+                # Process the filter request
+                pdf_proc = cache.get_pdf(pdf_id)
+                if pdf_proc:
+                    # Get or render base image
+                    base_image = cache.get_rendered_page(pdf_id, page_num, dpi)
+                    if not base_image:
+                        base_image = pdf_proc.get_page_as_image(page_num, dpi)
+                        cache.set_rendered_page(pdf_id, page_num, dpi, base_image)
+
+                    # Apply filters
+                    filtered_image = ImageFilters.apply_all_adjustments(
+                        base_image,
+                        **filters.dict()
+                    )
+
+                    # Convert to base64 for WebSocket transmission
+                    img_bytes = io.BytesIO()
+                    filtered_image.save(img_bytes, format='WEBP', quality=80, method=6)
+                    img_bytes.seek(0)
+
+                    # Send response
+                    await websocket.send_json({
+                        "type": "filter_complete",
+                        "page": page_num,
+                        "data": {
+                            "image_url": f"data:image/webp;base64,{img_bytes.getvalue().hex()}"
+                        }
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": "PDF not found"
+                    })
+
+    except WebSocketDisconnect:
+        del active_connections[client_id]
+    except Exception as e:
+        await websocket.send_json({
+            "type": "error",
+            "error": str(e)
+        })
+        del active_connections[client_id]
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
