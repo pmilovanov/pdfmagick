@@ -258,8 +258,27 @@ async def export_pdf(pdf_id: str, request: ExportRequest):
         if request.start_page > 1 and page_num < request.start_page - 1:
             continue
 
-        # Get page at export DPI
-        image = pdf_proc.get_page_as_image(page_num, request.dpi)
+        # Calculate effective DPI if target page size is specified
+        effective_dpi = request.dpi
+        if request.target_page_size:
+            # Get original page dimensions
+            page_rect = pdf_proc.doc[page_num].rect
+            original_width_inches = page_rect.width / 72.0
+            original_height_inches = page_rect.height / 72.0
+
+            # Calculate scale factor to fit target size
+            target_width, target_height = request.target_page_size
+            scale_width = target_width / original_width_inches
+            scale_height = target_height / original_height_inches
+            scale = min(scale_width, scale_height)  # Maintain aspect ratio
+
+            # Adjust DPI to render at target size
+            effective_dpi = int(request.dpi * scale)
+            logger.info(f"Page {page_num}: Original {original_width_inches:.1f}x{original_height_inches:.1f}\" -> "
+                       f"Target {target_width}x{target_height}\" -> Effective DPI: {effective_dpi}")
+
+        # Get page at calculated DPI
+        image = pdf_proc.get_page_as_image(page_num, effective_dpi)
 
         # Apply filters if specified for this page
         if page_num in request.page_filters:

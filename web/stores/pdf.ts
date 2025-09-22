@@ -118,7 +118,8 @@ export const usePdfStore = defineStore('pdf', {
         // Calculate DPI for preview (target ~700px tall for display)
         const pageDim = this.pdfInfo.page_dimensions[pageNum]
         const targetHeight = 700  // pixels for preview
-        const dpi = Math.min(Math.floor(targetHeight / pageDim.height_inches), 100)  // Cap at 100 DPI for previews
+        const calculatedDpi = Math.floor(targetHeight / pageDim.height_inches)
+        const dpi = Math.max(30, Math.min(calculatedDpi, 100))  // Keep between 30-100 DPI
 
         // Build URL directly to FastAPI with lower quality for faster loading
         const originalUrl = `http://localhost:8000/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/render?dpi=${dpi}&format=jpeg&quality=70`
@@ -163,9 +164,10 @@ export const usePdfStore = defineStore('pdf', {
         // Calculate DPI for preview (target ~700px tall for display)
         const pageDim = this.pdfInfo.page_dimensions[pageNum]
         const targetHeight = 700  // pixels for preview
-        const dpi = Math.min(Math.floor(targetHeight / pageDim.height_inches), 100)  // Cap at 100 DPI for previews
+        const calculatedDpi = Math.floor(targetHeight / pageDim.height_inches)
+        const dpi = Math.max(30, Math.min(calculatedDpi, 100))  // Keep between 30-100 DPI
 
-        const response = await $fetch(`/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/filter`, {
+        const response = await $fetch(`http://localhost:8000/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/filter`, {
           method: 'POST',
           body: {
             filters,
