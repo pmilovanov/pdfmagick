@@ -259,8 +259,9 @@ async def export_pdf(pdf_id: str, request: ExportRequest):
             continue
 
         # Calculate effective DPI if target page size is specified
+        # Note: Don't use effective DPI if padding is requested, as we want to render at full quality
         effective_dpi = request.dpi
-        if request.target_page_size:
+        if request.target_page_size and not request.pad_to_exact_size:
             # Get original page dimensions
             page_rect = pdf_proc.doc[page_num].rect
             original_width_inches = page_rect.width / 72.0
@@ -295,8 +296,26 @@ async def export_pdf(pdf_id: str, request: ExportRequest):
 
         # Apply padding if requested
         if request.pad_to_exact_size and request.target_page_size:
-            # Implementation would go here (simplified for now)
-            pass
+            target_width, target_height = request.target_page_size
+            target_width_pixels = int(target_width * request.dpi)
+            target_height_pixels = int(target_height * request.dpi)
+
+            # Convert 0-indexed page_num to 1-indexed for padding alignment
+            actual_page_num = page_num + 1
+
+            # Log padding operation
+            is_odd = (actual_page_num - request.first_odd_page) % 2 == 0
+            alignment = "left" if is_odd else "right"
+            logger.info(f"Page {page_num} (#{actual_page_num}): Padding from {image.width}x{image.height} to "
+                       f"{target_width_pixels}x{target_height_pixels}, align {alignment}")
+
+            image = ImageFilters.add_padding_for_exact_size(
+                image,
+                target_width_pixels,
+                target_height_pixels,
+                actual_page_num,
+                request.first_odd_page
+            )
 
         processed_images.append(image)
 

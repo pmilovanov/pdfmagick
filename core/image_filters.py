@@ -347,3 +347,53 @@ class ImageFilters:
             result = ImageFilters.adjust_sharpness(result, sharpness)
 
         return result
+
+    @staticmethod
+    def add_padding_for_exact_size(image: Image.Image, target_width: int, target_height: int,
+                                   page_num: int, first_odd_page: int = 1) -> Image.Image:
+        """Add padding to reach exact target dimensions with alternating horizontal alignment for double-sided printing.
+
+        Args:
+            image: Input PIL Image
+            target_width: Target width in pixels
+            target_height: Target height in pixels
+            page_num: Page number (1-indexed) to determine odd/even alignment
+            first_odd_page: Which page number should be considered the first "odd" page (default=1)
+
+        Returns:
+            Padded image with proper alignment for double-sided printing
+        """
+        # Determine if padding is needed
+        needs_width_padding = image.width < target_width
+        needs_height_padding = image.height < target_height
+
+        # If no padding needed, return original
+        if not needs_width_padding and not needs_height_padding:
+            return image
+
+        # Use the larger of the two dimensions to avoid clipping
+        final_width = max(image.width, target_width)
+        final_height = max(image.height, target_height)
+
+        # Create new image with white background
+        padded = Image.new('RGB', (final_width, final_height), (255, 255, 255))
+
+        # Calculate position for pasting
+        if needs_width_padding:
+            # Determine if this page should align left (odd) or right (even)
+            # based on offset from the first odd page
+            if (page_num - first_odd_page) % 2 == 0:  # This is an "odd" page - align left
+                x_offset = 0
+            else:  # This is an "even" page - align right
+                x_offset = final_width - image.width
+        else:
+            # Center horizontally if no width padding needed
+            x_offset = (final_width - image.width) // 2
+
+        # Always align to top for height
+        y_offset = 0
+
+        # Paste original image at calculated position
+        padded.paste(image, (x_offset, y_offset))
+
+        return padded
