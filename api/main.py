@@ -291,8 +291,25 @@ async def export_pdf(pdf_id: str, request: ExportRequest):
 
         # Add page number if requested
         if request.add_page_numbers:
-            # Implementation would go here (simplified for now)
-            pass
+            # Calculate the actual page number (considering start_page offset)
+            display_page_num = page_num + 1  # Convert from 0-indexed to 1-indexed
+
+            # Scale font size based on DPI (font points to pixels)
+            # Standard conversion: pixels = points * DPI / 72
+            scaled_font_size = int(request.page_number_size * request.dpi / 72)
+            scaled_margin = int(request.page_number_margin * request.dpi / 150)  # Scale margin relative to base DPI
+
+            logger.info(f"Adding page number to page {page_num}: '{request.page_number_format}' "
+                       f"font_size={scaled_font_size}px, margin={scaled_margin}px")
+
+            image = ImageFilters.add_page_number(
+                image,
+                display_page_num,
+                pdf_proc.page_count,
+                format_style=request.page_number_format,
+                font_size=scaled_font_size,
+                margin=scaled_margin
+            )
 
         # Apply padding if requested
         if request.pad_to_exact_size and request.target_page_size:

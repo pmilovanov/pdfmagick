@@ -2,7 +2,7 @@
 
 import cv2
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageDraw, ImageFont
 from typing import Optional, Tuple
 
 
@@ -397,3 +397,73 @@ class ImageFilters:
         padded.paste(image, (x_offset, y_offset))
 
         return padded
+
+    @staticmethod
+    def add_page_number(image: Image.Image, page_num: int, total_pages: int,
+                       format_style: str = "Page {n}", font_size: int = 14,
+                       margin: int = 30) -> Image.Image:
+        """Add page number to bottom-right corner of image.
+
+        Args:
+            image: Input PIL Image
+            page_num: Current page number (1-indexed for display)
+            total_pages: Total number of pages
+            format_style: Format string for page number
+            font_size: Font size in points
+            margin: Margin from edges in pixels
+
+        Returns:
+            Image with page number added
+        """
+        # Create a copy to avoid modifying original
+        img_with_number = image.copy()
+        draw = ImageDraw.Draw(img_with_number)
+
+        # Format the page number text
+        if format_style == "Page {n}":
+            text = f"Page {page_num}"
+        elif format_style == "{n}":
+            text = str(page_num)
+        elif format_style == "{n} of {total}":
+            text = f"{page_num} of {total_pages}"
+        else:
+            # Handle custom format with placeholders
+            text = format_style.replace("{n}", str(page_num)).replace("{total}", str(total_pages))
+
+        # Try to use a nice font, fall back to default if not available
+        try:
+            # Try common system fonts
+            font_options = [
+                "Helvetica.ttc", "Arial.ttf", "DejaVuSans.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf"
+            ]
+            font = None
+            for font_path in font_options:
+                try:
+                    font = ImageFont.truetype(font_path, font_size)
+                    break
+                except:
+                    continue
+
+            if font is None:
+                # If no system fonts found, use default
+                font = ImageFont.load_default()
+        except:
+            font = ImageFont.load_default()
+
+        # Calculate text position (bottom-right with margin)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = image.width - text_width - margin
+        y = image.height - text_height - margin
+
+        # Draw text with slight shadow for readability
+        shadow_offset = 1
+        draw.text((x + shadow_offset, y + shadow_offset), text, fill=(200, 200, 200), font=font)  # Shadow
+        draw.text((x, y), text, fill=(50, 50, 50), font=font)  # Main text
+
+        return img_with_number
