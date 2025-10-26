@@ -467,3 +467,103 @@ class ImageFilters:
         draw.text((x, y), text, fill=(50, 50, 50), font=font)  # Main text
 
         return img_with_number
+
+    @staticmethod
+    def arrange_pages_cut_and_stack(n: int) -> list:
+        """Arrange pages for cut-and-stack double-sided printing.
+
+        Args:
+            n: Total number of pages
+
+        Returns:
+            Flat array where every 4 elements represent one sheet:
+            [front_left, front_right, back_left, back_right, ...]
+            Page numbers are 1-indexed, None represents blank pages
+        """
+        import math
+
+        sheets_count = math.ceil(n / 4)
+        output = []
+
+        for i in range(sheets_count):
+            # Calculate page numbers for each position
+            front_left = 2 * i + 1
+            front_right = 2 * sheets_count + 2 * i + 1
+            back_left = 2 * sheets_count + 2 * i + 2
+            back_right = 2 * i + 2
+
+            # Append positions, using None for out-of-range pages
+            output.append(front_left if front_left <= n else None)
+            output.append(front_right if front_right <= n else None)
+            output.append(back_left if back_left <= n else None)
+            output.append(back_right if back_right <= n else None)
+
+        return output
+
+    @staticmethod
+    def create_2up_page(
+        left_img: Optional[Image.Image],
+        right_img: Optional[Image.Image],
+        target_width: float,
+        target_height: float,
+        dpi: int,
+        vertical_align: str = "top"
+    ) -> Image.Image:
+        """Create a landscape sheet with two pages side-by-side.
+
+        Args:
+            left_img: Image for left side (or None for blank)
+            right_img: Image for right side (or None for blank)
+            target_width: Target width in inches (for landscape, this is the longer dimension)
+            target_height: Target height in inches (for landscape, this is the shorter dimension)
+            dpi: DPI for output
+            vertical_align: Vertical alignment ("top" or "center")
+
+        Returns:
+            Composite image with both pages side-by-side, vertically aligned as specified
+        """
+        # Create blank landscape canvas
+        sheet_width_px = int(target_width * dpi)
+        sheet_height_px = int(target_height * dpi)
+        sheet = Image.new('RGB', (sheet_width_px, sheet_height_px), (255, 255, 255))
+
+        # Calculate half-page dimensions
+        half_width = sheet_width_px // 2
+
+        # Place left page if exists
+        if left_img:
+            # Scale to fit in left half, maintaining aspect ratio
+            scale = min(half_width / left_img.width, sheet_height_px / left_img.height)
+            new_width = int(left_img.width * scale)
+            new_height = int(left_img.height * scale)
+            resized = left_img.resize((new_width, new_height), Image.LANCZOS)
+
+            # Calculate vertical position based on alignment
+            if vertical_align == "center":
+                y_offset = (sheet_height_px - new_height) // 2
+            else:  # top
+                y_offset = 0
+
+            # Center horizontally within the left half
+            x_offset = (half_width - new_width) // 2
+            sheet.paste(resized, (x_offset, y_offset))
+
+        # Place right page if exists
+        if right_img:
+            # Scale to fit in right half
+            scale = min(half_width / right_img.width, sheet_height_px / right_img.height)
+            new_width = int(right_img.width * scale)
+            new_height = int(right_img.height * scale)
+            resized = right_img.resize((new_width, new_height), Image.LANCZOS)
+
+            # Calculate vertical position based on alignment
+            if vertical_align == "center":
+                y_offset = (sheet_height_px - new_height) // 2
+            else:  # top
+                y_offset = 0
+
+            # Center horizontally within the right half
+            x_offset = half_width + (half_width - new_width) // 2
+            sheet.paste(resized, (x_offset, y_offset))
+
+        return sheet
