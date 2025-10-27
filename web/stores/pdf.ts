@@ -221,41 +221,68 @@ export const usePdfStore = defineStore('pdf', {
       }
     },
 
+    async autoEnhancePage(pageNum: number) {
+      if (!this.pdfInfo) return
+
+      try {
+        // Call API to calculate optimal enhancement settings based on histogram analysis
+        const settings = await $fetch<FilterSettings>(
+          `http://localhost:8000/api/pdf/${this.pdfInfo.pdf_id}/page/${pageNum}/auto-enhance`,
+          {
+            method: 'GET',
+            query: {
+              dpi: 150  // Use 150 DPI for analysis
+            }
+          }
+        )
+
+        // Apply the calculated settings to this page
+        this.pageFilters.set(pageNum, settings)
+
+        // If this is the current page, update the preview
+        if (pageNum === this.currentPage) {
+          await this.applyFilters(pageNum, settings)
+        }
+
+        return settings
+      } catch (error) {
+        console.error(`Failed to auto-enhance page ${pageNum}:`, error)
+        throw error
+      }
+    },
+
     async autoEnhanceAllPages() {
       if (!this.pdfInfo) return
 
       this.isLoading = true
-      this.loadingMessage = 'Auto-enhancing all pages'
+      this.loadingMessage = 'Analyzing pages...'
       this.loadingProgress = 0
 
       try {
-        // Simple auto-enhance settings for all pages
-        const enhancedFilters: FilterSettings = {
-          ...this.getDefaultFilters(),
-          contrast: 5,
-          brightness: 2,
-          black_point: 10,
-          white_point: 245
-        }
-
         const totalPages = this.pdfInfo.page_count
 
-        // Apply to all pages with progress
+        // Analyze each page individually with histogram-based enhancement
         for (let i = 0; i < totalPages; i++) {
-          this.pageFilters.set(i, { ...enhancedFilters })
+          this.loadingMessage = `Analyzing page ${i + 1} of ${totalPages}`
+          this.loadingProgress = (i / totalPages) * 100
 
-          // Update progress
-          this.loadingProgress = ((i + 1) / totalPages) * 100
-          this.loadingMessage = `Enhancing page ${i + 1} of ${totalPages}`
-
-          // Small delay to show progress only for multiple pages
-          if (totalPages > 1) {
-            await new Promise(resolve => setTimeout(resolve, 20))
+          try {
+            await this.autoEnhancePage(i)
+          } catch (error) {
+            console.error(`Failed to auto-enhance page ${i}:`, error)
+            // Continue with other pages even if one fails
           }
         }
 
-        // Apply filters to current page after all settings are saved
-        await this.applyFilters(this.currentPage, enhancedFilters)
+        // Update progress to 100%
+        this.loadingProgress = 100
+        this.loadingMessage = `Enhanced all ${totalPages} pages`
+
+        // Apply filters to current page to show the result
+        const currentSettings = this.pageFilters.get(this.currentPage)
+        if (currentSettings) {
+          await this.applyFilters(this.currentPage, currentSettings)
+        }
       } finally {
         this.isLoading = false
         this.loadingMessage = ''

@@ -164,6 +164,54 @@ async def render_page(
     return StreamingResponse(img_bytes, media_type=media_type, headers=headers)
 
 
+@app.get("/api/pdf/{pdf_id}/page/{page_num}/auto-enhance")
+async def auto_enhance_page(
+    pdf_id: str,
+    page_num: int,
+    dpi: int = 150
+):
+    """Calculate auto-enhancement settings for a PDF page based on histogram analysis.
+
+    Args:
+        pdf_id: PDF document identifier
+        page_num: Page number (0-indexed)
+        dpi: DPI to use for rendering the page for analysis (default: 150)
+
+    Returns:
+        FilterSettings object with calculated enhancement values
+    """
+    start_time = time.time()
+
+    pdf_proc = cache.get_pdf(pdf_id)
+    if not pdf_proc:
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    if page_num < 0 or page_num >= pdf_proc.page_count:
+        raise HTTPException(status_code=400, detail="Invalid page number")
+
+    # Render the page for analysis (check cache first)
+    image = cache.get_rendered_page(pdf_id, page_num, dpi)
+    if not image:
+        try:
+            image = pdf_proc.get_page_as_image(page_num, dpi)
+            cache.set_rendered_page(pdf_id, page_num, dpi, image)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Render error: {str(e)}")
+
+    # Calculate enhancement settings using histogram analysis
+    try:
+        settings = ImageFilters.calculate_auto_enhance_settings(image)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Auto-enhance error: {str(e)}")
+
+    analysis_time = time.time() - start_time
+    logger.info(f"Auto-enhance analysis for page {page_num}: {analysis_time:.3f}s "
+                f"(black_point={settings['black_point']}, white_point={settings['white_point']}, "
+                f"contrast={settings['contrast']}, brightness={settings['brightness']})")
+
+    return settings
+
+
 @app.post("/api/pdf/{pdf_id}/page/{page_num}/filter")
 async def apply_filters(
     pdf_id: str,

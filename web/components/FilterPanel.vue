@@ -152,16 +152,26 @@ const updateFilters = debounce(() => {
   pdfStore.applyFilters(pdfStore.currentPage, { ...filters.value })
 }, 50)
 
-const autoEnhance = () => {
-  // Simple auto-enhance logic
-  filters.value = {
-    ...pdfStore.getDefaultFilters(),
-    contrast: 5,
-    brightness: 2,
-    black_point: 10,
-    white_point: 245
+const autoEnhance = async () => {
+  // Use histogram-based auto-enhancement
+  try {
+    const settings = await pdfStore.autoEnhancePage(pdfStore.currentPage)
+    if (settings) {
+      // Update the local filters to reflect the calculated settings
+      filters.value = { ...settings }
+    }
+  } catch (error) {
+    console.error('Auto-enhance failed:', error)
+    // Fallback to simple enhancement if API call fails
+    filters.value = {
+      ...pdfStore.getDefaultFilters(),
+      contrast: 5,
+      brightness: 2,
+      black_point: 10,
+      white_point: 245
+    }
+    updateFilters()
   }
-  updateFilters()
 }
 </script>
 
