@@ -14,9 +14,31 @@ A high-performance PDF processing application for adjusting image quality, apply
 ### Export & Layout Options
 - **Smart page sizing**: Automatic DPI adjustment for target page dimensions
 - **2-up layouts**: Print two pages per sheet with sequential or booklet ordering
-- **Cut & stack booklets**: Special mode for DIY booklet printing
+  - **Sequential mode**: Pages arranged in order (1,2 | 3,4 | 5,6...)
+  - **Cut & stack mode**: Special imposition for DIY booklet printing
 - **Page numbering**: Automatic page number addition with customizable format
+- **Alternating padding**: For double-sided printing with trimming
 - **Multiple formats**: Export as PDF, JPEG, or WebP with quality control
+
+#### 2-up Layout Details
+
+The 2-up layout feature allows efficient printing by placing two pages side-by-side on landscape-oriented sheets.
+
+**Sequential Mode:**
+- Simplest mode: pages appear in order across sheets
+- Page 1 & 2 on first sheet, 3 & 4 on second sheet, etc.
+- Ideal for documents that don't need booklet binding
+
+**Cut & Stack Mode (Booklet Printing):**
+- Special arrangement for creating booklets
+- After printing double-sided, cut sheets vertically down the middle
+- Stack the halves to create a sequential booklet
+- Perfect for DIY booklet binding
+
+**Configuration Options:**
+- Vertical alignment: Top or center positioning of pages
+- Works with all standard page sizes (Letter, A4, Legal, etc.)
+- Requires target page size to be specified
 
 ### Performance Features
 - **Intelligent caching**: LRU cache for rendered pages and filtered images
@@ -56,7 +78,7 @@ PDFMagick features a dual-frontend architecture with shared core processing:
 pdfmagick/
 ├── core/                    # Shared PDF processing logic
 │   ├── pdf_processor.py     # PDF manipulation and rendering
-│   ├── image_filters.py     # Image filtering algorithms
+│   ├── image_filters.py     # Image filtering + 2-up layout algorithms
 │   └── cache_manager.py     # Unified caching layer
 ├── api/                     # FastAPI backend
 │   ├── main.py             # API endpoints and WebSocket handlers
@@ -71,6 +93,9 @@ pdfmagick/
 │   │   └── ...
 │   └── stores/             # Pinia state management
 │       └── pdf.ts          # PDF state and operations
+├── tests/                   # Test suite
+│   ├── conftest.py         # Shared pytest fixtures
+│   └── test_2up_functionality.py  # 2-up layout tests (13 tests)
 ├── src/                     # Original Streamlit app
 │   └── app.py              # Streamlit application
 └── run_*.py                # Application launchers
@@ -130,6 +155,21 @@ python run_api.py
 cd web
 npm run dev
 ```
+
+### Using 2-up Layout
+
+1. Upload your PDF using the web interface
+2. Adjust filters as needed for each page
+3. Click "Export PDF" button
+4. In the Export Dialog:
+   - Select a **Page Size** (required for 2-up)
+   - Enable **2-up layout** checkbox
+   - Choose **Layout mode**: Sequential or Cut & Stack
+   - Select **Vertical alignment**: Top or Center
+   - Configure other export options as desired
+5. Click "Export PDF" to download
+
+**Note:** Target page size must be specified for 2-up to work. The output will be in landscape orientation (width and height swapped).
 
 ## 📡 API Endpoints
 
@@ -200,8 +240,21 @@ All filters can be adjusted with the following ranges:
 
 ### Running Tests
 ```bash
-uv run pytest --ignore=3p
+# Run all tests
+uv run pytest tests/
+
+# Run with verbose output
+uv run pytest tests/ -v
+
+# Run specific test file
+uv run pytest tests/test_2up_functionality.py -v
 ```
+
+**Test Coverage:**
+- 13 tests for 2-up layout functionality (all passing)
+- Helper function tests (cut-and-stack algorithm, page compositing)
+- Integration tests (sequential and booklet modes)
+- Multiple page size formats (Letter, A4, Legal)
 
 ### Code Style
 - Python: Black + Ruff
@@ -212,6 +265,7 @@ uv run pytest --ignore=3p
 - Export at 300 DPI for print quality
 - Use JPEG format for faster processing
 - WebP provides best quality/size ratio
+- 2-up layout processes pages sequentially during export
 
 ## 📈 Performance Characteristics
 
@@ -219,6 +273,32 @@ uv run pytest --ignore=3p
 - **Filter Application**: ~10-30ms per operation
 - **Cache Hit Rate**: >90% during typical usage
 - **Memory Usage**: Configurable cache size (default 100MB)
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**Issue: 2-up layout not being applied**
+- **Solution**: Make sure to select a target page size in the Export Dialog. 2-up requires a page size to determine landscape dimensions.
+
+**Issue: Port 8000 already in use**
+- **Solution**: Find and kill the process using port 8000:
+  ```bash
+  lsof -i :8000 | grep LISTEN
+  kill <PID>
+  ```
+
+**Issue: Slow page switching in UI**
+- **Solution**: The frontend uses direct FastAPI access to avoid proxy overhead. If using Nuxt dev server, this is expected to be slower than production.
+
+**Issue: Memory usage growing**
+- **Solution**: The cache manager implements LRU eviction at 100MB default. For very large PDFs, restart the server to clear cache.
+
+**Issue: Export seems frozen**
+- **Cause**: Export is a blocking operation, especially for large PDFs or high DPI
+- **Solution**: Wait for completion. Consider using lower DPI for large documents.
+
+For more detailed troubleshooting, see `CLAUDE.md`.
 
 ## 🤝 Contributing
 
