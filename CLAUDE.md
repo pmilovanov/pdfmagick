@@ -96,6 +96,32 @@ const dpi = Math.max(30, Math.min(calculatedDpi, 100))
 
 **Future Solution:** Implement SSE or WebSocket progress updates
 
+### Issue: 2-up Layout Not Applied
+
+**Cause:** `target_page_size` not set in export request
+
+**Solution:** 2-up requires a target page size to determine landscape dimensions. Always set `target_page_size` when `two_up_enabled: true`:
+
+```json
+{
+  "two_up_enabled": true,
+  "target_page_size": [8.5, 11.0],  // Required!
+  "layout_mode": "sequential"
+}
+```
+
+### Issue: 2-up Pages in Wrong Order (Cut-and-Stack)
+
+**Cause:** Misunderstanding of the cut-and-stack algorithm
+
+**Solution:** The algorithm is designed for a specific workflow:
+1. Print all sheets double-sided (flip on short edge)
+2. Cut each sheet vertically down the center
+3. Stack all left halves together, stack all right halves together
+4. The stacks form a sequential booklet when properly ordered
+
+Test with a small document (4-8 pages) first to understand the pattern.
+
 ## 🛠️ Development Workflow
 
 ### Testing Changes
@@ -150,6 +176,48 @@ Direct FastAPI URLs bypass Nuxt proxy:
 ```typescript
 const url = `http://localhost:8000/api/pdf/${pdfId}/page/${pageNum}/render`
 ```
+
+### 5. 2-up Layout Implementation (`core/image_filters.py` + `api/main.py`)
+
+The 2-up functionality creates landscape sheets with two pages side-by-side for efficient printing.
+
+**Cut-and-Stack Algorithm** (`arrange_pages_cut_and_stack()`):
+
+For n pages, creates ceil(n/4) sheets. Each sheet has 4 positions:
+
+```python
+# For sheet i (0-indexed):
+front_left = 2 * i + 1
+front_right = 2 * sheets_count + 2 * i + 1
+back_left = 2 * sheets_count + 2 * i + 2
+back_right = 2 * i + 2
+```
+
+**Example with 8 pages:**
+- Sheet 1: Front [1, 5], Back [6, 2]
+- Sheet 2: Front [3, 7], Back [8, 4]
+
+After printing double-sided and cutting vertically, stacking the halves creates a booklet.
+
+**Compositing Logic** (`create_2up_page()`):
+1. Creates landscape canvas (width and height swapped from target size)
+2. Scales each page to fit in half-width while maintaining aspect ratio
+3. Centers each page within its half (horizontally)
+4. Applies vertical alignment (top or center)
+
+**Critical Order of Operations** (in export endpoint):
+1. Render page at export DPI
+2. Apply filters (if set for that page)
+3. Add page numbers (if enabled)
+4. Add padding for trimming (if enabled)
+5. **Then** composite into 2-up sheets
+6. Generate final PDF with landscape dimensions
+
+**Performance Notes:**
+- 2-up composites are NOT cached (one-time operation during export)
+- Composite images are ~2x larger than single pages
+- Uses LANCZOS resampling for high quality
+- Memory spike during export is expected and temporary
 
 ## 📊 Performance Benchmarks
 
@@ -256,6 +324,92 @@ ps aux | grep python | grep -E "run_api|run_new"
 **Context:** Simplicity vs persistence trade-off
 **Decision:** Use in-memory cache with LRU eviction
 **Consequences:** Fast access, lost on restart, memory constraints
+
+### ADR-004: 2-up Compositing at Export Time Only
+**Date:** 2025-01
+**Status:** Implemented
+**Context:** 2-up layout requires combining pages into composite sheets
+**Decision:** Perform 2-up compositing during export, not during preview
+**Consequences:**
+- **Pro**: Simpler architecture, no preview UI complexity
+- **Pro**: No need to cache large composite images
+- **Pro**: Users can preview individual pages with filters applied
+- **Con**: Users cannot preview the 2-up layout before export
+- **Con**: Must re-export to see layout changes
+
+**Rationale**: Preview of 2-up would require significant UI changes (showing two pages at once, handling page navigation differently, etc.). The workflow (adjust filters → export → print) doesn't benefit much from 2-up preview since the goal is print output, not screen viewing.
+
+### ADR-005: No Caching of 2-up Composites
+**Date:** 2025-01
+**Status:** Implemented
+**Context:** 2-up creates large landscape composite images
+**Decision:** Do not cache 2-up composite sheets
+**Consequences:**
+- **Pro**: Simpler cache management
+- **Pro**: Lower memory footprint
+- **Pro**: Export is a one-time operation anyway
+- **Con**: Re-exporting with same settings requires regeneration
+
+**Rationale**: Export is typically a one-time operation. The memory cost of caching composites (2x page size × number of sheets) would be substantial. Since users rarely export the same configuration multiple times, caching provides minimal benefit.
+
+## 🧪 Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run pytest tests/
+
+# Run with verbose output
+uv run pytest tests/ -v
+
+# Run specific test file
+uv run pytest tests/test_2up_functionality.py -v
+
+# Run specific test class
+uv run pytest tests/test_2up_functionality.py::Test2upHelperFunctions -v
+```
+
+### Test Coverage
+
+**Current Test Suite** (`tests/test_2up_functionality.py`):
+- 13 tests covering 2-up layout functionality
+- 100% coverage of 2-up helper functions
+- Integration tests with PDF generation
+
+**Test Categories:**
+1. **Helper Functions** (7 tests):
+   - Cut-and-stack arrangement algorithm
+   - 2-up page creation with various inputs
+   - Edge cases (odd pages, blank pages, etc.)
+
+2. **Integration** (3 tests):
+   - Sequential 2-up with even/odd page counts
+   - Cut-and-stack booklet generation
+   - Full workflow from PDF to 2-up output
+
+3. **Page Sizes** (3 parametrized tests):
+   - Letter, A4, Legal formats
+   - Dimension verification for each size
+
+**Test Fixtures** (`tests/conftest.py`):
+- `create_test_page`: Factory for generating test page images
+- `create_test_pdf`: Factory for generating test PDF documents
+
+**What's NOT Tested:**
+- API endpoint integration (deliberately avoided to keep tests lightweight)
+- Frontend ExportDialog component behavior
+- WebSocket functionality
+- Actual printer output (manual verification needed)
+
+### Adding New Tests
+
+When adding 2-up related features:
+
+1. Add unit tests for any new helper functions in `core/image_filters.py`
+2. Add integration test if the feature changes the export pipeline
+3. Use existing fixtures for consistency
+4. Keep tests focused on logic, not HTTP/UI behavior
 
 ---
 

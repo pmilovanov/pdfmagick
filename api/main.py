@@ -338,19 +338,80 @@ async def export_pdf(pdf_id: str, request: ExportRequest):
 
     # Handle 2-up layout if enabled
     if request.two_up_enabled and request.target_page_size:
-        # Implementation would go here (simplified for now)
-        pass
+        target_w, target_h = request.target_page_size
+        # For landscape orientation, swap dimensions
+        landscape_w = target_h  # Height becomes width
+        landscape_h = target_w  # Width becomes height
+
+        composite_sheets = []
+
+        if request.layout_mode == "cut_and_stack":
+            # Get page arrangement for cut-and-stack
+            arrangement = ImageFilters.arrange_pages_cut_and_stack(len(processed_images))
+
+            logger.info(f"Cut & stack arrangement for {len(processed_images)} pages: {len(arrangement)} positions, "
+                       f"{len(arrangement) // 4} sheets")
+
+            # Process every 4 pages (one sheet, front and back)
+            for i in range(0, len(arrangement), 4):
+                # Get page indices (convert from 1-indexed to 0-indexed)
+                front_left_idx = arrangement[i] - 1 if arrangement[i] else None
+                front_right_idx = arrangement[i+1] - 1 if arrangement[i+1] else None
+                back_left_idx = arrangement[i+2] - 1 if arrangement[i+2] else None
+                back_right_idx = arrangement[i+3] - 1 if arrangement[i+3] else None
+
+                # Create front side
+                front = ImageFilters.create_2up_page(
+                    processed_images[front_left_idx] if front_left_idx is not None else None,
+                    processed_images[front_right_idx] if front_right_idx is not None else None,
+                    landscape_w,
+                    landscape_h,
+                    request.dpi,
+                    request.vertical_align
+                )
+                composite_sheets.append(front)
+
+                # Create back side
+                back = ImageFilters.create_2up_page(
+                    processed_images[back_left_idx] if back_left_idx is not None else None,
+                    processed_images[back_right_idx] if back_right_idx is not None else None,
+                    landscape_w,
+                    landscape_h,
+                    request.dpi,
+                    request.vertical_align
+                )
+                composite_sheets.append(back)
+
+        else:  # Sequential mode
+            logger.info(f"Sequential 2-up layout for {len(processed_images)} pages")
+            for i in range(0, len(processed_images), 2):
+                left = processed_images[i]
+                right = processed_images[i+1] if i+1 < len(processed_images) else None
+                sheet = ImageFilters.create_2up_page(
+                    left, right,
+                    landscape_w, landscape_h,
+                    request.dpi,
+                    request.vertical_align
+                )
+                composite_sheets.append(sheet)
+
+        # Use composite sheets for PDF generation
+        processed_images = composite_sheets
+        # Set target page size to landscape dimensions
+        final_page_size = (landscape_w * 72, landscape_h * 72)
+    else:
+        # Regular single-page layout
+        if request.pad_to_exact_size and request.target_page_size:
+            target_w, target_h = request.target_page_size
+            final_page_size = (target_w * 72, target_h * 72)
+        else:
+            final_page_size = None
 
     # Generate PDF
     try:
-        # Calculate target page size in points
-        target_size = None
-        if request.target_page_size:
-            target_size = (request.target_page_size[0] * 72, request.target_page_size[1] * 72)
-
         pdf_bytes = PDFProcessor.images_to_pdf(
             processed_images,
-            target_page_size=target_size,
+            target_page_size=final_page_size,
             image_format=request.image_format.upper(),
             jpeg_quality=request.jpeg_quality
         )
