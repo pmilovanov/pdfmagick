@@ -281,6 +281,80 @@ class ImageFilters:
         return image
 
     @staticmethod
+    def calculate_auto_enhance_settings(image: Image.Image) -> dict:
+        """Calculate auto-enhancement settings based on histogram analysis.
+
+        This uses a conservative approach that analyzes the image histogram
+        to determine optimal black/white points and contrast adjustments.
+        Based on the algorithm from the Streamlit version.
+
+        Args:
+            image: Input PIL Image
+
+        Returns:
+            Dictionary with filter settings:
+            {
+                'brightness': float,
+                'contrast': float,
+                'highlights': float,
+                'midtones': float,
+                'shadows': float,
+                'exposure': float,
+                'saturation': float,
+                'vibrance': float,
+                'sharpness': float,
+                'black_point': int,
+                'white_point': int,
+                'gamma': float
+            }
+        """
+        # Convert to numpy for analysis
+        img_array = np.array(image)
+
+        # Calculate grayscale for histogram analysis
+        if len(img_array.shape) == 3:
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_array
+
+        # Find optimal black and white points using 5th and 95th percentiles
+        # (less aggressive than 2% and 98%)
+        black_point = int(np.percentile(gray, 5))
+        white_point = int(np.percentile(gray, 95))
+
+        # Default settings (all filters at default values)
+        settings = {
+            'brightness': 0.0,
+            'contrast': 0.0,
+            'highlights': 0.0,
+            'midtones': 0.0,
+            'shadows': 0.0,
+            'exposure': 0.0,
+            'saturation': 0.0,
+            'vibrance': 0.0,
+            'sharpness': 0.0,
+            'black_point': 0,
+            'white_point': 255,
+            'gamma': 1.0
+        }
+
+        # Only apply enhancement if there's meaningful room for improvement
+        if black_point > 20 or white_point < 235:
+            # Moderate the adjustment to avoid overcorrection
+            # Don't push blacks too hard - cap at 50
+            settings['black_point'] = min(black_point, 50)
+            # Keep some headroom in whites - minimum 205
+            settings['white_point'] = max(white_point, 205)
+            # Gentler contrast boost
+            settings['contrast'] = 5.0
+        else:
+            # Image is already well-distributed, just add subtle enhancement
+            settings['contrast'] = 3.0
+            settings['brightness'] = 2.0
+
+        return settings
+
+    @staticmethod
     def apply_all_adjustments(
         image: Image.Image,
         brightness: float = 0.0,

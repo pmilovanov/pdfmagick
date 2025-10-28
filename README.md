@@ -48,28 +48,27 @@ The 2-up layout feature allows efficient printing by placing two pages side-by-s
 
 ## 🏗️ Architecture
 
-PDFMagick features a dual-frontend architecture with shared core processing:
+PDFMagick features a modern full-stack architecture with Vue/Nuxt frontend and FastAPI backend:
 
 ### Component Overview
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│  Streamlit App  │     │   Vue 3 + Nuxt  │
-│    (Stable)     │     │  (Active Dev)   │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         │                       ↓
-         │              ┌─────────────────┐
-         │              │   FastAPI       │
-         │              │   Backend       │
-         │              └────────┬────────┘
-         │                       │
-         └───────────┬───────────┘
-                     ↓
-            ┌─────────────────┐
-            │   Core Modules  │
-            │  (Shared Logic) │
-            └─────────────────┘
+┌─────────────────┐
+│   Vue 3 + Nuxt  │
+│    Frontend     │
+└────────┬────────┘
+         │
+         ↓
+┌─────────────────┐
+│   FastAPI       │
+│   Backend       │
+└────────┬────────┘
+         │
+         ↓
+┌─────────────────┐
+│   Core Modules  │
+│  (Shared Logic) │
+└─────────────────┘
 ```
 
 ### Project Structure
@@ -95,9 +94,9 @@ pdfmagick/
 │       └── pdf.ts          # PDF state and operations
 ├── tests/                   # Test suite
 │   ├── conftest.py         # Shared pytest fixtures
-│   └── test_2up_functionality.py  # 2-up layout tests (13 tests)
-├── src/                     # Original Streamlit app
-│   └── app.py              # Streamlit application
+│   ├── test_2up_functionality.py   # 2-up layout tests (13 tests)
+│   ├── test_auto_enhance.py        # Auto-enhance tests (11 tests)
+│   └── test_auto_enhance_api.py    # API integration tests (9 tests)
 └── run_*.py                # Application launchers
 ```
 
@@ -129,19 +128,13 @@ cd ..
 
 ## 🎯 Usage
 
-### Quick Start: New Stack (Recommended)
+### Quick Start
 ```bash
 # Run both API and Vue frontend
 python run_new.py
 ```
 - 🌐 Web App: http://localhost:3000
 - 📚 API Docs: http://localhost:8000/docs
-
-### Alternative: Streamlit Version
-```bash
-python run.py
-```
-- 🌐 Open: http://localhost:8501
 
 ### Development Mode
 
@@ -321,4 +314,4 @@ MIT License - see LICENSE file for details
 
 ---
 
-**Note**: This project is under active development. The Vue/Nuxt frontend is the primary focus, while the Streamlit version remains available for stability.
+**Note**: PDFMagick features a production-ready Vue/Nuxt frontend with FastAPI backend, comprehensive testing (33+ tests), and histogram-based auto-enhancement.

@@ -13,7 +13,6 @@ PDFMagick follows a **layered architecture** with clear separation of concerns:
 1. **Core Layer** (`core/`): Pure Python PDF/image processing logic, framework-agnostic
 2. **API Layer** (`api/`): FastAPI backend providing RESTful endpoints
 3. **Frontend Layer** (`web/`): Vue 3/Nuxt 3 reactive UI
-4. **Legacy Layer** (`src/`): Original Streamlit implementation (stable but not actively developed)
 
 ### Critical Performance Paths
 
